@@ -1,5 +1,18 @@
 import dns from "node:dns";
 import nodemailer from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
+
+/** IPv4 zuerst (Container/Cloud), statt custom lookup – vermeidet TS-Overload-Probleme bei createTransport */
+let smtpDnsOrderApplied = false;
+function ensureSmtpPreferIpv4(): void {
+  if (smtpDnsOrderApplied || process.env.RABBIT_SMTP_IPV4 === "0") return;
+  try {
+    dns.setDefaultResultOrder("ipv4first");
+  } catch {
+    /* ältere Node-Versionen */
+  }
+  smtpDnsOrderApplied = true;
+}
 
 const COMPANY = {
   name: "Rabbit-Technik",
@@ -58,33 +71,26 @@ function createTransporter() {
   const secure = explicitSecure || port === 465;
   const useStartTls = isGmail && port === 587 && !explicitSecure;
 
-  /** IPv4 erzwingen – reduziert Verbindungs-Timeouts (IPv6/DNS in Containern). Abschalten: RABBIT_SMTP_IPV4=0 */
-  const forceIpv4 = process.env.RABBIT_SMTP_IPV4 !== "0";
-  const lookup = forceIpv4
-    ? (
-        hostname: string,
-        _opts: unknown,
-        cb: (err: NodeJS.ErrnoException | null, address: string, family: number) => void
-      ) => {
-        dns.lookup(hostname, { family: 4 }, cb);
-      }
-    : undefined;
+  if (process.env.RABBIT_SMTP_IPV4 !== "0") ensureSmtpPreferIpv4();
 
-  return nodemailer.createTransport({
+  const opts: SMTPTransport.Options = {
     host,
     port,
     secure,
     requireTLS: useStartTls || undefined,
     auth: user ? { user, pass } : undefined,
     tls: { rejectUnauthorized: true, minVersion: "TLSv1.2" },
-    lookup,
     connectionTimeout: 90_000,
     greetingTimeout: 45_000,
     socketTimeout: 120_000,
     pool: false,
-    debug: process.env.RABBIT_SMTP_DEBUG === "1",
-    logger: process.env.RABBIT_SMTP_DEBUG === "1" ? console : undefined,
-  });
+  };
+  if (process.env.RABBIT_SMTP_DEBUG === "1") {
+    opts.debug = true;
+    opts.logger = console;
+  }
+
+  return nodemailer.createTransport(opts);
 }
 
 export function publicTrackingUrl(trackingCode: string): string {
