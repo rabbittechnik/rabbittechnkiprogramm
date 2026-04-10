@@ -1,12 +1,49 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { fetchJson, fetchWorkshop } from "../api";
 import { RabbitMark, BrandWordmark } from "../components/RabbitMark";
 
 const DEVICE_TYPES = ["Laptop", "PC", "Smartphone", "Tablet", "Konsole", "Sonstiges"];
 
+/** Gruppierung nur in der UI; unbekannte Codes landen unter „Sonstiges“. */
+const SERVICE_CATEGORY_ORDER = [
+  "Diagnose & Basis",
+  "Reinigung & Kühlung",
+  "Software & Betriebssystem",
+  "Daten",
+  "Speicher & Arbeitsspeicher",
+  "Hardware & Komponenten",
+  "Netzwerk",
+  "Sonstiges",
+] as const;
+
+const SERVICE_CATEGORY: Record<string, (typeof SERVICE_CATEGORY_ORDER)[number]> = {
+  diagnose: "Diagnose & Basis",
+  cleaning: "Reinigung & Kühlung",
+  thermal_paste: "Reinigung & Kühlung",
+  luefter_service: "Reinigung & Kühlung",
+  software: "Software & Betriebssystem",
+  virus_remove: "Software & Betriebssystem",
+  driver_update: "Software & Betriebssystem",
+  win_install: "Software & Betriebssystem",
+  bios_update: "Software & Betriebssystem",
+  office_setup: "Software & Betriebssystem",
+  backup: "Daten",
+  migration: "Daten",
+  data_recovery_ext: "Daten",
+  os_clone: "Daten",
+  ssd_install: "Speicher & Arbeitsspeicher",
+  ram_upgrade: "Speicher & Arbeitsspeicher",
+  hardware: "Hardware & Komponenten",
+  display: "Hardware & Komponenten",
+  laptop_battery: "Hardware & Komponenten",
+  keyboard_replace: "Hardware & Komponenten",
+  psu_desktop: "Hardware & Komponenten",
+  wlan_network: "Netzwerk",
+};
+
 type Problem = { key: string; label: string };
-type ServiceRow = { id: string; code: string; name: string; price_cents: number };
+type ServiceRow = { id: string; code: string; name: string; price_cents: number; sort_order: number };
 type PartSuggestion = { id: string; name: string; sale_cents: number; score: number; notes: string | null };
 
 type StammCustomer = { id: string; name: string; email: string | null; phone: string | null; address: string | null };
@@ -31,7 +68,9 @@ export function Wizard() {
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [extraServiceCodes, setExtraServiceCodes] = useState<string[]>([]);
+  const [selectedServiceCodes, setSelectedServiceCodes] = useState<string[]>([]);
+  /** true, sobald die Liste zum aktuellen Problem vom Server geladen ist (dann sind explizite service_codes in der Preview gültig). */
+  const [serviceSelectionExplicit, setServiceSelectionExplicit] = useState(false);
   const [allServices, setAllServices] = useState<ServiceRow[]>([]);
 
   const [preview, setPreview] = useState<{ services: ServiceRow[]; total_cents: number } | null>(null);
@@ -51,6 +90,31 @@ export function Wizard() {
     fetchJson<Problem[]>("/api/problems").then(setProblems).catch(console.error);
     fetchJson<ServiceRow[]>("/api/services").then(setAllServices).catch(console.error);
   }, []);
+
+  useEffect(() => {
+    if (!problemKey) {
+      setSelectedServiceCodes([]);
+      setServiceSelectionExplicit(false);
+      setPreview(null);
+      return;
+    }
+    setPreview(null);
+    setServiceSelectionExplicit(false);
+    let cancelled = false;
+    fetchJson<{ default_service_codes: string[] }>("/api/repairs/preview", {
+      method: "POST",
+      body: JSON.stringify({ problem_key: problemKey }),
+    })
+      .then((d) => {
+        if (cancelled) return;
+        setSelectedServiceCodes(d.default_service_codes ?? []);
+        setServiceSelectionExplicit(true);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [problemKey]);
 
   useEffect(() => {
     fetchWorkshop<StammCustomer[]>("/api/customers")
@@ -84,25 +148,51 @@ export function Wizard() {
     }
   };
 
-  const refreshPreview = useCallback(async () => {
-    if (!problemKey) {
-      setPreview(null);
-      return;
-    }
-    const data = await fetchJson<{
-      services: ServiceRow[];
-      total_cents: number;
-      suggested_service_codes: string[];
-    }>("/api/repairs/preview", {
-      method: "POST",
-      body: JSON.stringify({ problem_key: problemKey, extra_service_codes: extraServiceCodes }),
-    });
-    setPreview({ services: data.services, total_cents: data.total_cents });
-  }, [problemKey, extraServiceCodes]);
-
   useEffect(() => {
-    void refreshPreview();
-  }, [problemKey, extraServiceCodes, refreshPreview]);
+    if (!problemKey || !serviceSelectionExplicit) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await fetchJson<{
+          services: ServiceRow[];
+          total_cents: number;
+        }>("/api/repairs/preview", {
+          method: "POST",
+          body: JSON.stringify({ problem_key: problemKey, service_codes: selectedServiceCodes }),
+        });
+        if (!cancelled) setPreview({ services: data.services, total_cents: data.total_cents });
+      } catch {
+        if (!cancelled) setPreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [problemKey, selectedServiceCodes, serviceSelectionExplicit]);
+
+  const servicesSorted = useMemo(
+    () => [...allServices].sort((a, b) => a.sort_order - b.sort_order),
+    [allServices]
+  );
+
+  const servicesByCategory = useMemo(() => {
+    const map = new Map<string, ServiceRow[]>();
+    for (const s of servicesSorted) {
+      const cat = SERVICE_CATEGORY[s.code] ?? "Sonstiges";
+      const list = map.get(cat) ?? [];
+      list.push(s);
+      map.set(cat, list);
+    }
+    return map;
+  }, [servicesSorted]);
+
+  const resetServicesToDefaults = () => {
+    if (!problemKey) return;
+    void fetchJson<{ default_service_codes: string[] }>("/api/repairs/preview", {
+      method: "POST",
+      body: JSON.stringify({ problem_key: problemKey }),
+    }).then((d) => setSelectedServiceCodes(d.default_service_codes ?? []));
+  };
 
   const suggestionQuery = useMemo(() => {
     const p = problems.find((x) => x.key === problemKey)?.label ?? "";
@@ -138,8 +228,8 @@ export function Wizard() {
     return `Status: Vorgesehen – ${problemLabel || "Diagnose / Bearbeitung"}`;
   }, [problemKey, problemLabel]);
 
-  const toggleExtraService = (code: string) => {
-    setExtraServiceCodes((prev) =>
+  const toggleService = (code: string) => {
+    setSelectedServiceCodes((prev) =>
       prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
     );
   };
@@ -221,7 +311,7 @@ export function Wizard() {
         pre_damage_notes: preDamage.length ? JSON.stringify(preDamage) : null,
         legal_consent: true,
         signature_data_url,
-        extra_service_codes: extraServiceCodes,
+        service_codes: selectedServiceCodes,
       };
       if (selectedCustomerId) {
         body.customer_id = selectedCustomerId;
@@ -551,7 +641,10 @@ export function Wizard() {
                   {s.name}
                 </div>
               ))}
-              {!(preview?.services?.length) && <p className="text-zinc-600 text-sm">Problem wählen für Vorschau</p>}
+              {!(preview?.services?.length) && problemKey && (
+                <p className="text-zinc-600 text-sm">Leistungen in der Übersicht rechts wählen</p>
+              )}
+              {!problemKey && <p className="text-zinc-600 text-sm">Problem wählen für Vorschau</p>}
             </div>
           </div>
         )}
@@ -588,23 +681,57 @@ export function Wizard() {
               </div>
               <p className="text-[10px] text-zinc-600 mt-1">zzgl. eingebuchter Ersatzteile in der Werkstatt</p>
             </div>
-            <div className="pt-3">
-              <p className="text-xs text-zinc-500 mb-2">Zusatz-Services</p>
-              <div className="flex flex-wrap gap-1.5">
-                {allServices.map((s) => (
-                  <button
-                    key={s.code}
-                    type="button"
-                    onClick={() => toggleExtraService(s.code)}
-                    className={`px-2 py-1 rounded-md text-[10px] border ${
-                      extraServiceCodes.includes(s.code)
-                        ? "border-[#39ff14] bg-[#39ff14]/15 text-[#39ff14]"
-                        : "border-zinc-600 text-zinc-500"
-                    }`}
-                  >
-                    {s.name}
-                  </button>
-                ))}
+            <div className="pt-3 border-t border-white/10">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs text-zinc-500 uppercase">Leistungen wählen</p>
+                <button
+                  type="button"
+                  disabled={!problemKey}
+                  onClick={() => resetServicesToDefaults()}
+                  className="text-[10px] text-[#00d4ff] underline disabled:opacity-40 disabled:no-underline"
+                >
+                  Standard zum Problem
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-600 mb-2">
+                Vorschläge abhängig vom Problem; einzelne Positionen abwählbar, weitere Leistungen ankreuzbar (z. B.
+                SSD-Einbau, Klonen).
+              </p>
+              <div className="max-h-[min(52vh,420px)] overflow-y-auto rounded-lg border border-[#9b59b6]/25 bg-[#060b13]/80 p-2 space-y-1.5 pr-1">
+                {!problemKey && (
+                  <p className="text-xs text-zinc-600 py-2 text-center">Zuerst ein Problem auswählen</p>
+                )}
+                {problemKey &&
+                  SERVICE_CATEGORY_ORDER.map((cat) => {
+                    const rows = servicesByCategory.get(cat);
+                    if (!rows?.length) return null;
+                    return (
+                      <div key={cat} className="space-y-1 pb-2 last:pb-0 border-b border-white/5 last:border-b-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#9b59b6]/90 px-1.5 pt-1">
+                          {cat}
+                        </p>
+                        {rows.map((s) => (
+                          <label
+                            key={s.code}
+                            className="flex items-start gap-2.5 cursor-pointer rounded-md px-1.5 py-1 hover:bg-white/5"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedServiceCodes.includes(s.code)}
+                              onChange={() => toggleService(s.code)}
+                              className="mt-0.5 rounded border-[#9b59b6]/50"
+                            />
+                            <span className="flex-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0 text-xs text-zinc-300">
+                              <span>{s.name}</span>
+                              <span className="font-mono text-[#00d4ff]/90 shrink-0">
+                                {(s.price_cents / 100).toFixed(0)} €
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           </div>

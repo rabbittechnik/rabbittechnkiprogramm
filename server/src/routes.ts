@@ -45,6 +45,20 @@ export function paramStr(v: string | string[] | undefined): string {
   return Array.isArray(v) ? (v[0] ?? "") : v;
 }
 
+function resolveServiceCodesForRequest(body: {
+  problem_key?: unknown;
+  service_codes?: unknown;
+  extra_service_codes?: unknown;
+}): string[] {
+  const problemKey = String(body.problem_key ?? "");
+  const defaultCodes = getSuggestedServiceCodes(problemKey);
+  if (Array.isArray(body.service_codes)) {
+    return [...new Set(body.service_codes.map(String).filter(Boolean))];
+  }
+  const extraCodes = Array.isArray(body.extra_service_codes) ? body.extra_service_codes.map(String) : [];
+  return [...new Set([...defaultCodes, ...extraCodes])];
+}
+
 export function registerRoutes(app: Express, db: Database.Database) {
   ensureUploadDir();
 
@@ -149,11 +163,16 @@ export function registerRoutes(app: Express, db: Database.Database) {
   /** Live-Preis + Vorschlag Services */
   app.post("/api/repairs/preview", (req, res) => {
     const problemKey = String(req.body?.problem_key ?? "");
-    const extraCodes = Array.isArray(req.body?.extra_service_codes) ? req.body.extra_service_codes : [];
-    const codes = [...new Set([...getSuggestedServiceCodes(problemKey), ...extraCodes.map(String)])];
+    const defaultCodes = getSuggestedServiceCodes(problemKey);
+    const codes = resolveServiceCodesForRequest(req.body ?? {});
     const rows = getServiceRowsByCodes(db, codes);
     const total_cents = sumServiceCents(rows);
-    res.json({ suggested_service_codes: codes, services: rows, total_cents });
+    res.json({
+      default_service_codes: defaultCodes,
+      suggested_service_codes: codes,
+      services: rows,
+      total_cents,
+    });
   });
 
   /** Automatische Teile-Vorschläge aus Freitext / Problem */
@@ -234,8 +253,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       const problemKey = String(body.problem_key ?? "");
       const problemLabel =
         PROBLEMS.find((p) => p.key === problemKey)?.label ?? body.problem_label ?? problemKey;
-      const extraCodes = Array.isArray(body.extra_service_codes) ? body.extra_service_codes.map(String) : [];
-      const serviceCodes = [...new Set([...getSuggestedServiceCodes(problemKey), ...extraCodes])];
+      const serviceCodes = resolveServiceCodesForRequest(body);
       const serviceRows = getServiceRowsByCodes(db, serviceCodes);
 
       const did = nanoid();

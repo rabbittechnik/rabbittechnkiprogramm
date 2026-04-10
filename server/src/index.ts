@@ -7,7 +7,7 @@ import express from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
 import { openDatabase } from "./db/init.js";
-import { seedIfEmpty } from "./seed.js";
+import { ensureServices, seedIfEmpty } from "./seed.js";
 import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
 import { isMailConfigured, isResendConfigured, smtpMissingVars } from "./lib/mail.js";
@@ -30,6 +30,7 @@ app.use(express.json({ limit: "12mb" }));
 
 const db = openDatabase();
 seedIfEmpty(db);
+ensureServices(db);
 registerRoutes(app, db);
 
 const storage = multer.diskStorage({

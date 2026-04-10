@@ -1,25 +1,40 @@
 import { nanoid } from "nanoid";
 import type Database from "better-sqlite3";
 
+/** Katalog: typische Werkstattleistungen (Festpreise als Richtwert, zzgl. Teile) */
 const SERVICES: { code: string; name: string; price_cents: number; sort: number }[] = [
-  { code: "win_install", name: "Windows Neuinstallation", price_cents: 7900, sort: 10 },
-  { code: "diagnose", name: "Diagnose", price_cents: 4900, sort: 20 },
-  { code: "cleaning", name: "Reinigung", price_cents: 6900, sort: 30 },
-  { code: "display", name: "Display Reparatur", price_cents: 11900, sort: 40 },
-  { code: "hardware", name: "Hardware Reparatur", price_cents: 5900, sort: 50 },
-  { code: "software", name: "Software Fehlerbehebung", price_cents: 6900, sort: 60 },
-  { code: "backup", name: "Datensicherung", price_cents: 2900, sort: 70 },
-  { code: "migration", name: "Datenmigration", price_cents: 7900, sort: 80 },
+  { code: "diagnose", name: "Diagnose / Erstbefund", price_cents: 4900, sort: 10 },
+  { code: "cleaning", name: "Reinigung (Staub, Lüfter)", price_cents: 6900, sort: 20 },
+  { code: "thermal_paste", name: "Wärmeleitpaste CPU/GPU erneuern", price_cents: 3900, sort: 30 },
+  { code: "luefter_service", name: "Lüfter reinigen oder tauschen", price_cents: 4900, sort: 35 },
+  { code: "software", name: "Software-Fehlerbehebung", price_cents: 6900, sort: 40 },
+  { code: "virus_remove", name: "Viren- & Malware-Entfernung", price_cents: 7900, sort: 45 },
+  { code: "driver_update", name: "Treiber & Windows-Updates", price_cents: 4900, sort: 50 },
+  { code: "win_install", name: "Windows Neuinstallation", price_cents: 7900, sort: 55 },
+  { code: "os_clone", name: "System klonen (z. B. auf neue SSD)", price_cents: 8900, sort: 60 },
+  { code: "backup", name: "Datensicherung", price_cents: 2900, sort: 65 },
+  { code: "migration", name: "Datenmigration / -übernahme", price_cents: 7900, sort: 70 },
+  { code: "data_recovery_ext", name: "Datenrettung (erweitert)", price_cents: 14900, sort: 75 },
+  { code: "ssd_install", name: "SSD einbauen / HDD ersetzen (Arbeit)", price_cents: 6900, sort: 80 },
+  { code: "ram_upgrade", name: "RAM erweitern / einbauen", price_cents: 4900, sort: 85 },
+  { code: "hardware", name: "Hardware-Reparatur (allgemein)", price_cents: 5900, sort: 90 },
+  { code: "display", name: "Display / Bildschirm Reparatur", price_cents: 11900, sort: 95 },
+  { code: "laptop_battery", name: "Akku-Austausch (Arbeit)", price_cents: 4900, sort: 100 },
+  { code: "keyboard_replace", name: "Tastatur-Austausch", price_cents: 6900, sort: 105 },
+  { code: "psu_desktop", name: "Netzteil prüfen/tauschen (Desktop)", price_cents: 4900, sort: 110 },
+  { code: "wlan_network", name: "WLAN / Netzwerk einrichten", price_cents: 4900, sort: 115 },
+  { code: "bios_update", name: "BIOS / UEFI Update", price_cents: 3900, sort: 120 },
+  { code: "office_setup", name: "Office & Software nach Wunsch", price_cents: 5900, sort: 125 },
 ];
 
-/** Problem-Key → empfohlene Service-Codes (Preis-Engine) */
+/** Problem-Key → empfohlene Service-Codes (Vorauswahl; im Wizard änderbar) */
 export const PROBLEM_TO_SERVICES: Record<string, string[]> = {
-  startet_nicht: ["diagnose", "hardware"],
+  startet_nicht: ["diagnose", "hardware", "psu_desktop"],
   langsam: ["diagnose", "cleaning", "software"],
   display_defekt: ["display", "diagnose"],
-  software: ["software", "diagnose"],
-  wasser: ["diagnose", "hardware"],
-  datenrettung: ["backup", "diagnose"],
+  software: ["software", "diagnose", "virus_remove"],
+  wasser: ["diagnose", "hardware", "cleaning"],
+  datenrettung: ["backup", "data_recovery_ext", "diagnose"],
   neuinstallation: ["win_install", "backup"],
   sonstiges: ["diagnose"],
 };
@@ -67,6 +82,19 @@ export function seedIfEmpty(db: Database.Database): void {
         r.sale_cents,
         r.notes ?? null
       );
+    }
+  });
+  tx();
+}
+
+/** Fehlende Katalog-Codes nachziehen (bestehende DBs behalten Daten; neue Codes werden ergänzt). */
+export function ensureServices(db: Database.Database): void {
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO services (id, code, name, price_cents, sort_order) VALUES (?, ?, ?, ?, ?)`
+  );
+  const tx = db.transaction(() => {
+    for (const s of SERVICES) {
+      insert.run(nanoid(), s.code, s.name, s.price_cents, s.sort);
     }
   });
   tx();
