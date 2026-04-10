@@ -222,12 +222,19 @@ function nlToBr(s: string): string {
 const RAILWAY_SMTP_HINT =
   "Railway Hobby/Free: ausgehendes SMTP zu Gmail ist oft gesperrt (Timeout). Lösung: RABBIT_RESEND_API_KEY (HTTPS, resend.com) oder Railway Pro für SMTP.";
 
+/**
+ * Resend: Absender muss eine bei Resend verifizierte Domain nutzen (@gmail.com geht nicht).
+ * Ohne RABBIT_RESEND_FROM: Resend-Testadresse (Onboarding).
+ */
+function resolveResendFrom(): string {
+  const explicit = process.env.RABBIT_RESEND_FROM?.trim();
+  if (explicit) return explicit;
+  return "Rabbit-Technik <onboarding@resend.dev>";
+}
+
 async function sendViaResend(opts: { to: string; subject: string; text: string; html: string }): Promise<{ sent: boolean; reason?: string }> {
   const apiKey = process.env.RABBIT_RESEND_API_KEY!.trim();
-  const from =
-    process.env.RABBIT_RESEND_FROM?.trim() ||
-    process.env.RABBIT_SMTP_FROM?.trim() ||
-    `Rabbit-Technik <${COMPANY.email}>`;
+  const from = resolveResendFrom();
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
