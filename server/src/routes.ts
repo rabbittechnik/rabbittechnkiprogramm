@@ -19,18 +19,15 @@ import {
 } from "./lib/workshopAuth.js";
 import {
   sendRepairAcceptedEmail,
-  sendRepairReadyEmail,
-  sendRepairStatusUpdateEmail,
   sendTestProbeEmail,
   logMailOutcome,
   publicTrackingUrl,
   formatEuroFromCents,
   formatVorschaeden,
-  formatTeileListe,
-  formatReparaturDetails,
-  statusLabelDe,
+  partStatusLabelDe,
 } from "./lib/mail.js";
 import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
+import { queueCustomerRepairNotification } from "./lib/repairCustomerNotify.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -447,67 +444,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as typeof previous;
-    const customer = db.prepare(`SELECT * FROM customers WHERE id = ?`).get(repair.customer_id) as
-      | { email: string | null; name: string }
-      | undefined;
-    const device = db.prepare(`SELECT * FROM devices WHERE id = ?`).get(repair.device_id) as
-      | { device_type: string; brand: string | null; model: string | null }
-      | undefined;
-
-    if (customer?.email && device) {
-      const trackingLink = publicTrackingUrl(repair.tracking_code);
-      const parts = db
-        .prepare(`SELECT name, status FROM repair_parts WHERE repair_id = ?`)
-        .all(id) as { name: string; status: string }[];
-      const serviceNames = (
-        db
-          .prepare(`SELECT s.name FROM repair_services rs JOIN services s ON s.id = rs.service_id WHERE rs.repair_id = ?`)
-          .all(id) as { name: string }[]
-      ).map((x) => x.name);
-
-      if (status === "fertig" && previous.status !== "fertig") {
-        logMailOutcome(
-          "Fertigstellung",
-          repair.tracking_code,
-          customer.email,
-          sendRepairReadyEmail({
-            to: customer.email,
-            kundenname: customer.name,
-            geraetetyp: device.device_type,
-            marke: device.brand?.trim() || "—",
-            modell: device.model?.trim() || "—",
-            reparaturDetails: formatReparaturDetails({
-              problemLabel: repair.problem_label,
-              description: repair.description,
-              serviceNames,
-            }),
-            endpreisEuro: formatEuroFromCents(repair.total_cents),
-            trackingLink,
-          })
-        );
-      } else if (
-        ["diagnose", "wartet_auf_teile", "in_reparatur"].includes(status) &&
-        status !== previous.status
-      ) {
-        logMailOutcome(
-          "Status-Update",
-          repair.tracking_code,
-          customer.email,
-          sendRepairStatusUpdateEmail({
-            to: customer.email,
-            kundenname: customer.name,
-            geraetetyp: device.device_type,
-            marke: device.brand?.trim() || "—",
-            modell: device.model?.trim() || "—",
-            statusAnzeige: statusLabelDe(status),
-            teileListe: formatTeileListe(parts),
-            trackingLink,
-          })
-        );
-      }
-    } else if (customer && !customer.email) {
-      console.warn(`[mail] Status-E-Mail übersprungen: keine Kunden-E-Mail [${repair.tracking_code}]`);
-    }
+    queueCustomerRepairNotification(db, id);
 
     res.json({ repair });
   });
@@ -536,15 +473,26 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(400).json({ error: "Teilename fehlt" });
       return;
     }
+    const initialStatus = String(req.body?.status ?? "bestellt").trim();
+    const allowedInit = ["bestellt", "vor_ort"];
+    if (!allowedInit.includes(initialStatus)) {
+      res.status(400).json({ error: "Ungültiger Teile-Status (bestellt oder vor_ort)" });
+      return;
+    }
     const purchase_cents = Math.round(Number(req.body?.purchase_cents ?? 0));
     const sale_cents = Math.round(Number(req.body?.sale_cents ?? 0));
     const pid = nanoid();
     db.prepare(
       `INSERT INTO repair_parts (id, repair_id, part_id, name, purchase_cents, sale_cents, status) VALUES (?,?,?,?,?,?,?)`
-    ).run(pid, repairId, null, name, purchase_cents, sale_cents, "bestellt");
+    ).run(pid, repairId, null, name, purchase_cents, sale_cents, initialStatus);
     recalculateRepairTotal(db, repairId);
     syncRepairStatusForParts(db, repairId);
     const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(pid);
+    queueCustomerRepairNotification(
+      db,
+      repairId,
+      `Neues Ersatzteil: „${name}“ – ${partStatusLabelDe(initialStatus)}`
+    );
     res.status(201).json({ part });
   });
 
@@ -552,9 +500,16 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const repairId = paramStr(req.params.repairId);
     const partId = paramStr(req.params.partId);
     const status = String(req.body?.status ?? "");
-    const allowed = ["bestellt", "unterwegs", "angekommen", "eingebaut"];
+    const allowed = ["bestellt", "unterwegs", "angekommen", "eingebaut", "vor_ort"];
     if (!allowed.includes(status)) {
       res.status(400).json({ error: "Ungültiger Teile-Status" });
+      return;
+    }
+    const prevRow = db
+      .prepare(`SELECT name, status FROM repair_parts WHERE id = ? AND repair_id = ?`)
+      .get(partId, repairId) as { name: string; status: string } | undefined;
+    if (!prevRow) {
+      res.status(404).json({ error: "Teil nicht gefunden" });
       return;
     }
     const r = db
@@ -566,6 +521,12 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     syncRepairStatusForParts(db, repairId);
     const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(partId);
+    if (prevRow.status !== status) {
+      const zusatz = `Ersatzteil „${prevRow.name}“: ${partStatusLabelDe(status)}${
+        prevRow.status ? ` (vorher: ${partStatusLabelDe(prevRow.status)})` : ""
+      }`;
+      queueCustomerRepairNotification(db, repairId, zusatz);
+    }
     res.json({ part });
   });
 

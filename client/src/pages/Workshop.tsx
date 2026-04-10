@@ -32,6 +32,15 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   const [partName, setPartName] = useState("");
   const [sale, setSale] = useState("");
   const [buy, setBuy] = useState("");
+  const [newPartStatus, setNewPartStatus] = useState<"bestellt" | "vor_ort">("bestellt");
+
+  const PART_STATUS_OPTIONS: { value: string; label: string }[] = [
+    { value: "bestellt", label: "Bestellt" },
+    { value: "unterwegs", label: "Unterwegs" },
+    { value: "angekommen", label: "Angekommen" },
+    { value: "vor_ort", label: "Bereits vor Ort / Lager" },
+    { value: "eingebaut", label: "Eingebaut" },
+  ];
 
   const refresh = useCallback(async () => {
     try {
@@ -77,6 +86,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       method: "POST",
       body: JSON.stringify({
         name: partName,
+        status: newPartStatus,
         sale_cents: Math.round(parseFloat(sale.replace(",", ".")) * 100) || 0,
         purchase_cents: Math.round(parseFloat(buy.replace(",", ".")) * 100) || 0,
       }),
@@ -84,6 +94,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     setPartName("");
     setSale("");
     setBuy("");
+    setNewPartStatus("bestellt");
     const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
     setDetail(d);
     await refresh();
@@ -228,8 +239,17 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                     onChange={(e) => setBuy(e.target.value)}
                   />
                 </div>
+                <label className="block text-xs text-zinc-500 mb-1">Start-Status (Kunde wird per E-Mail informiert)</label>
+                <select
+                  className="rt-input-neon w-full mb-2 !min-h-[44px]"
+                  value={newPartStatus}
+                  onChange={(e) => setNewPartStatus(e.target.value as "bestellt" | "vor_ort")}
+                >
+                  <option value="bestellt">Beim Lieferanten bestellt</option>
+                  <option value="vor_ort">Bereits vor Ort / aus Lager</option>
+                </select>
                 <button type="button" className="rt-btn-confirm w-full text-base" onClick={() => void addPart()}>
-                  Teil buchen
+                  Teil erfassen & Kunde benachrichtigen
                 </button>
               </div>
               <div>
@@ -246,9 +266,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                         value={p.status}
                         onChange={(e) => void updatePartStatus(p.id, e.target.value)}
                       >
-                        {["bestellt", "unterwegs", "angekommen", "eingebaut"].map((x) => (
-                          <option key={x} value={x}>
-                            {x}
+                        {PART_STATUS_OPTIONS.map((x) => (
+                          <option key={x.value} value={x.value}>
+                            {x.label}
                           </option>
                         ))}
                       </select>

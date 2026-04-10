@@ -23,7 +23,9 @@ export function syncRepairStatusForParts(db: Database.Database, repairId: string
     .prepare(`SELECT status FROM repair_parts WHERE repair_id = ?`)
     .all(repairId) as { status: string }[];
   if (rows.length === 0) return;
-  const allArrivedOrBuilt = rows.every((r) => r.status === "angekommen" || r.status === "eingebaut");
+  const allArrivedOrBuilt = rows.every((r) =>
+    r.status === "angekommen" || r.status === "eingebaut" || r.status === "vor_ort"
+  );
   const anyPending = rows.some((r) => r.status === "bestellt" || r.status === "unterwegs");
   const cur = db.prepare(`SELECT status FROM repairs WHERE id = ?`).get(repairId) as
     | { status: string }

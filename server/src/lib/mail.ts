@@ -145,23 +145,23 @@ export function statusLabelDe(status: string): string {
   return m[status] ?? status.replace(/_/g, " ");
 }
 
-const PART_STATUS_DE: Record<string, string> = {
-  bestellt: "bestellt",
-  unterwegs: "unterwegs",
-  angekommen: "angekommen",
-  eingebaut: "eingebaut",
-};
+/** Lesbare Teile-Status für E-Mail & Tracking */
+export function partStatusLabelDe(status: string): string {
+  const m: Record<string, string> = {
+    bestellt: "beim Lieferanten bestellt",
+    unterwegs: "unterwegs zu uns",
+    angekommen: "bei uns angekommen",
+    eingebaut: "eingebaut",
+    vor_ort: "bereits vor Ort / aus Lager",
+  };
+  return m[status] ?? status.replace(/_/g, " ");
+}
 
 export function formatTeileListe(
   parts: { name: string; status: string }[]
 ): string {
   if (!parts.length) return "—";
-  return parts
-    .map((p) => {
-      const st = PART_STATUS_DE[p.status] ?? p.status;
-      return `${p.name} – ${st}`;
-    })
-    .join("\n");
+  return parts.map((p) => `${p.name} – ${partStatusLabelDe(p.status)}`).join("\n");
 }
 
 export function formatVorschaeden(raw: string | null): string {
@@ -422,13 +422,13 @@ ${statusAnzeige}
 Ersatzteile (falls vorhanden):
 ${teileListe}
 
-Unsere Techniker arbeiten aktuell an Ihrem Gerät.
-Sobald es fertig ist, informieren wir Sie umgehend.
+Den aktuellen Stand und alle Ersatzteile sehen Sie unter Ihrem persönlichen Link.
+Bei Rückfragen erreichen Sie uns telefonisch oder per E-Mail.
 
 Status jederzeit live verfolgen:
 ${trackingLink}
 
-Vielen Dank für Ihre Geduld.
+Vielen Dank für Ihr Vertrauen.
 
 ${textFooter()}`;
 
@@ -437,11 +437,11 @@ ${textFooter()}`;
 <p><strong>Gerät:</strong><br/>${nlToBr(`${geraetetyp} – ${marke} ${modell}`)}</p>
 <p><strong>Aktueller Status:</strong><br/>${nlToBr(statusAnzeige)}</p>
 <p><strong>Ersatzteile (falls vorhanden):</strong><br/>${nlToBr(teileListe)}</p>
-<p>Unsere Techniker arbeiten aktuell an Ihrem Gerät.<br/>
-Sobald es fertig ist, informieren wir Sie umgehend.</p>
+<p>Den aktuellen Stand und alle Ersatzteile sehen Sie unter Ihrem persönlichen Link.<br/>
+Bei Rückfragen erreichen Sie uns telefonisch oder per E-Mail.</p>
 <p><strong>Status jederzeit live verfolgen:</strong><br/>
 <a href="${escapeHtml(trackingLink)}">${escapeHtml(trackingLink)}</a></p>
-<p>Vielen Dank für Ihre Geduld.</p>
+<p>Vielen Dank für Ihr Vertrauen.</p>
 ${htmlFooter()}`;
 
   return sendSmtp({ to: opts.to, subject, text, html });

@@ -33,6 +33,7 @@ const PART_STATUS: Record<string, string> = {
   unterwegs: "Unterwegs",
   angekommen: "Angekommen",
   eingebaut: "Eingebaut",
+  vor_ort: "Vor Ort / Lager",
 };
 
 const WERKSTATT = {
