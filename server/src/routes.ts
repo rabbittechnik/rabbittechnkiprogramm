@@ -182,15 +182,26 @@ export function registerRoutes(app: Express, db: Database.Database) {
   app.post("/api/repairs", async (req, res) => {
     try {
       const body = req.body ?? {};
+      const existingCustomerId = body.customer_id ? String(body.customer_id).trim() : "";
+
       const customer = {
         name: String(body.customer?.name ?? "").trim(),
         email: body.customer?.email ? String(body.customer.email) : null,
         phone: body.customer?.phone ? String(body.customer.phone) : null,
         address: body.customer?.address ? String(body.customer.address) : null,
       };
-      if (!customer.name) {
+
+      if (!existingCustomerId && !customer.name) {
         res.status(400).json({ error: "Kundenname fehlt" });
         return;
+      }
+
+      if (existingCustomerId) {
+        const row = db.prepare(`SELECT id FROM customers WHERE id = ?`).get(existingCustomerId) as { id: string } | undefined;
+        if (!row) {
+          res.status(400).json({ error: "Kunde nicht gefunden" });
+          return;
+        }
       }
 
       const problemKey = String(body.problem_key ?? "");
@@ -200,7 +211,6 @@ export function registerRoutes(app: Express, db: Database.Database) {
       const serviceCodes = [...new Set([...getSuggestedServiceCodes(problemKey), ...extraCodes])];
       const serviceRows = getServiceRowsByCodes(db, serviceCodes);
 
-      const cid = nanoid();
       const did = nanoid();
       const rid = nanoid();
       const tracking = makeTrackingCode();
@@ -209,10 +219,21 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
       const deviceImageUrl = body.device?.device_image_url ? String(body.device.device_image_url) : null;
 
+      let customerForMail!: { name: string; email: string | null };
+
       const tx = db.transaction(() => {
-        db.prepare(
-          `INSERT INTO customers (id, name, email, phone, address) VALUES (?,?,?,?,?)`
-        ).run(cid, customer.name, customer.email, customer.phone, customer.address);
+        const cid = existingCustomerId || nanoid();
+        if (!existingCustomerId) {
+          db.prepare(
+            `INSERT INTO customers (id, name, email, phone, address) VALUES (?,?,?,?,?)`
+          ).run(cid, customer.name, customer.email, customer.phone, customer.address);
+          customerForMail = { name: customer.name, email: customer.email };
+        } else {
+          const row = db
+            .prepare(`SELECT name, email FROM customers WHERE id = ?`)
+            .get(cid) as { name: string; email: string | null };
+          customerForMail = { name: row.name, email: row.email };
+        }
 
         db.prepare(
           `INSERT INTO devices (id, customer_id, device_type, brand, model, serial_number, device_image_url)
@@ -282,12 +303,12 @@ export function registerRoutes(app: Express, db: Database.Database) {
       const row = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(rid);
       res.status(201).json({ repair: row, tracking_code: tracking });
 
-      if (customer.email) {
+      if (customerForMail.email) {
         const base = process.env.PUBLIC_TRACKING_URL ?? "http://localhost:5173";
         const trackingUrl = `${base.replace(/\/$/, "")}/track/${encodeURIComponent(tracking)}`;
         void sendRepairConfirmation({
-          to: customer.email,
-          customerName: customer.name,
+          to: customerForMail.email,
+          customerName: customerForMail.name,
           trackingCode: tracking,
           trackingUrl,
         }).catch((err) => console.error("E-Mail:", err));

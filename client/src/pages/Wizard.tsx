@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { fetchJson } from "../api";
+import { fetchJson, fetchWorkshop } from "../api";
 import { RabbitMark, BrandWordmark } from "../components/RabbitMark";
 
 const DEVICE_TYPES = ["Laptop", "PC", "Smartphone", "Tablet", "Konsole", "Sonstiges"];
@@ -8,6 +8,8 @@ const DEVICE_TYPES = ["Laptop", "PC", "Smartphone", "Tablet", "Konsole", "Sonsti
 type Problem = { key: string; label: string };
 type ServiceRow = { id: string; code: string; name: string; price_cents: number };
 type PartSuggestion = { id: string; name: string; sale_cents: number; score: number; notes: string | null };
+
+type StammCustomer = { id: string; name: string; email: string | null; phone: string | null; address: string | null };
 
 export function Wizard() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -23,6 +25,9 @@ export function Wizard() {
   const [accessories, setAccessories] = useState("");
   const [preDamage, setPreDamage] = useState<string[]>([]);
   const [legal, setLegal] = useState(false);
+  const [stammCustomers, setStammCustomers] = useState<StammCustomer[]>([]);
+  const [stammLoadError, setStammLoadError] = useState<string | null>(null);
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -42,6 +47,38 @@ export function Wizard() {
     fetchJson<Problem[]>("/api/problems").then(setProblems).catch(console.error);
     fetchJson<ServiceRow[]>("/api/services").then(setAllServices).catch(console.error);
   }, []);
+
+  useEffect(() => {
+    fetchWorkshop<StammCustomer[]>("/api/customers")
+      .then((rows) => {
+        setStammCustomers(rows);
+        setStammLoadError(null);
+      })
+      .catch((e: Error & { code?: string }) => {
+        setStammCustomers([]);
+        if (e.code === "WORKSHOP_AUTH") {
+          setStammLoadError("Stammdaten: Bitte zuerst unter Kundenverwaltung anmelden.");
+        } else {
+          setStammLoadError(null);
+        }
+      });
+  }, []);
+
+  const applyStammCustomer = (id: string) => {
+    setSelectedCustomerId(id);
+    if (!id) {
+      setCustomerName("");
+      setCustomerEmail("");
+      setCustomerPhone("");
+      return;
+    }
+    const c = stammCustomers.find((x) => x.id === id);
+    if (c) {
+      setCustomerName(c.name);
+      setCustomerEmail(c.email ?? "");
+      setCustomerPhone(c.phone ?? "");
+    }
+  };
 
   const refreshPreview = useCallback(async () => {
     if (!problemKey) {
@@ -156,8 +193,8 @@ export function Wizard() {
   const submit = async () => {
     const c = canvasRef.current;
     const signature_data_url = c ? c.toDataURL("image/png") : "";
-    if (!customerName.trim()) {
-      alert("Bitte Kundenname eingeben.");
+    if (!selectedCustomerId && !customerName.trim()) {
+      alert("Bitte Kundenname eingeben oder einen Kunden aus den Stammdaten wählen.");
       return;
     }
     if (!legal) {
@@ -166,8 +203,7 @@ export function Wizard() {
     }
     setSubmitting(true);
     try {
-      const body = {
-        customer: { name: customerName, email: customerEmail || null, phone: customerPhone || null },
+      const body: Record<string, unknown> = {
         device: {
           device_type: deviceType,
           brand: brand || null,
@@ -183,6 +219,15 @@ export function Wizard() {
         signature_data_url,
         extra_service_codes: extraServiceCodes,
       };
+      if (selectedCustomerId) {
+        body.customer_id = selectedCustomerId;
+      } else {
+        body.customer = {
+          name: customerName,
+          email: customerEmail || null,
+          phone: customerPhone || null,
+        };
+      }
       const res = await fetchJson<{ repair: { id: string }; tracking_code: string }>("/api/repairs", {
         method: "POST",
         body: JSON.stringify(body),
@@ -292,11 +337,35 @@ export function Wizard() {
           "Kunden & Gerät",
           <div className="space-y-3 text-sm">
             <div>
-              <label className="text-zinc-500 text-xs uppercase tracking-wider">Kunde – Name *</label>
-              <input
+              <label className="text-zinc-500 text-xs uppercase tracking-wider">Kunde aus Stammdaten</label>
+              <select
                 className="mt-1 w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2.5 text-white outline-none focus:border-[#00d4ff]/60"
+                value={selectedCustomerId}
+                onChange={(e) => applyStammCustomer(e.target.value)}
+              >
+                <option value="">— Neuer Kunde (manuell ausfüllen) —</option>
+                {stammCustomers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.phone ? ` · ${c.phone}` : ""}
+                    {c.email ? ` · ${c.email}` : ""}
+                  </option>
+                ))}
+              </select>
+              {stammLoadError && <p className="mt-1 text-xs text-amber-400/90">{stammLoadError}</p>}
+            </div>
+            <div>
+              <label className="text-zinc-500 text-xs uppercase tracking-wider">
+                Kunde – Name *{selectedCustomerId ? " (Stammdaten)" : ""}
+              </label>
+              <input
+                className={`mt-1 w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2.5 text-white outline-none focus:border-[#00d4ff]/60 ${
+                  selectedCustomerId ? "opacity-90 cursor-not-allowed" : ""
+                }`}
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
+                readOnly={Boolean(selectedCustomerId)}
+                title={selectedCustomerId ? "Ändern in Kundenverwaltung" : undefined}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -304,18 +373,24 @@ export function Wizard() {
                 <label className="text-zinc-500 text-xs">E-Mail</label>
                 <input
                   type="email"
-                  className="mt-1 w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2 text-white outline-none"
+                  className={`mt-1 w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2 text-white outline-none ${
+                    selectedCustomerId ? "opacity-90 cursor-not-allowed" : ""
+                  }`}
                   value={customerEmail}
                   onChange={(e) => setCustomerEmail(e.target.value)}
+                  readOnly={Boolean(selectedCustomerId)}
                 />
               </div>
               <div>
                 <label className="text-zinc-500 text-xs">Telefon</label>
                 <input
                   type="tel"
-                  className="mt-1 w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2 text-white outline-none"
+                  className={`mt-1 w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2 text-white outline-none ${
+                    selectedCustomerId ? "opacity-90 cursor-not-allowed" : ""
+                  }`}
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(e.target.value)}
+                  readOnly={Boolean(selectedCustomerId)}
                 />
               </div>
             </div>

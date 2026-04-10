@@ -15,7 +15,7 @@ export function RabbitMark({ className = "w-10 h-10" }: { className?: string }) 
 export function BrandWordmark({ className = "" }: { className?: string }) {
   return (
     <div className={`flex flex-col leading-none ${className}`}>
-      <span className="font-display text-lg sm:text-xl font-bold italic tracking-wide text-white drop-shadow-[0_0_12px_rgba(0,212,255,0.5)]">
+      <span className="font-cyber text-xl sm:text-2xl md:text-3xl font-extrabold italic tracking-[0.12em] text-white uppercase drop-shadow-[0_0_20px_rgba(0,212,255,0.65),0_0_40px_rgba(0,212,255,0.25)]">
         RABBIT-TECHNIK
       </span>
     </div>

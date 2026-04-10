@@ -13,25 +13,96 @@ body {
     radial-gradient(ellipse 60% 40% at 100% 0%, rgba(0, 245, 196, 0.08), transparent);
 }
 
-/* Mockup: dunkles Navy + feines Hex-/Punkt-Raster */
+/* Mockup: dunkles Navy + Carbon/Hex + Vignette */
 .rt-dashboard-bg {
-  background-color: #060b13;
+  background-color: #040810;
   background-image:
-    radial-gradient(ellipse 100% 60% at 50% -30%, rgba(0, 212, 255, 0.14), transparent),
-    radial-gradient(ellipse 70% 50% at 100% 20%, rgba(155, 89, 182, 0.1), transparent),
+    radial-gradient(ellipse 90% 70% at 50% -25%, rgba(0, 212, 255, 0.22), transparent 55%),
+    radial-gradient(ellipse 60% 45% at 100% 10%, rgba(155, 89, 182, 0.14), transparent),
+    radial-gradient(ellipse 50% 40% at 0% 80%, rgba(57, 255, 20, 0.06), transparent),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 212, 255, 0.03) 2px,
+      rgba(0, 212, 255, 0.03) 3px
+    ),
     repeating-linear-gradient(
       -60deg,
       transparent,
       transparent 11px,
-      rgba(255, 255, 255, 0.02) 11px,
-      rgba(255, 255, 255, 0.02) 12px
+      rgba(255, 255, 255, 0.025) 11px,
+      rgba(255, 255, 255, 0.025) 12px
     ),
-    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.04) 1px, transparent 0);
-  background-size: auto, auto, auto, 20px 20px;
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.045) 1px, transparent 0),
+    radial-gradient(ellipse 120% 100% at 50% 100%, #040810 0%, transparent 55%);
+  background-size: auto, auto, auto, 100% 100%, auto, 22px 22px, auto;
+}
+
+/* Subtiler CRT-Scanline-Overlay (episch, nicht nervig) */
+.rt-home-scanline {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+}
+@keyframes rt-home-scanline {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(120vh);
+  }
+}
+.rt-home-scanline::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 35%;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 212, 255, 0.06) 48%,
+    rgba(0, 255, 200, 0.14) 50%,
+    rgba(0, 212, 255, 0.06) 52%,
+    transparent 100%
+  );
+  animation: rt-home-scanline 11s linear infinite;
+  opacity: 0.45;
+}
+.rt-home-scanline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.12) 2px,
+    rgba(0, 0, 0, 0.12) 3px
+  );
+  opacity: 0.25;
+  pointer-events: none;
 }
 
 .rt-neon-tile {
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
+  transition:
+    transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 0.25s ease,
+    box-shadow 0.35s ease;
+}
+
+.rt-neon-tile:hover {
+  transform: scale(1.045) translateY(-3px);
+  z-index: 2;
+  filter: brightness(1.14) saturate(1.08);
+}
+
+.rt-neon-tile:active {
+  transform: scale(0.97);
 }
 
 .rt-btn {
