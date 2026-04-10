@@ -49,7 +49,7 @@ function resolveSmtpHost(): string {
   return "";
 }
 
-/** True, wenn Versand möglich ist (Absender + Zugangsdaten + Host). */
+/** True, wenn klassisches SMTP (Gmail & Co.) vollständig konfiguriert ist. */
 export function isSmtpConfigured(): boolean {
   const from = process.env.RABBIT_SMTP_FROM?.trim();
   const user = process.env.RABBIT_SMTP_USER?.trim();
@@ -58,7 +58,17 @@ export function isSmtpConfigured(): boolean {
   return Boolean(from && user && pass && host);
 }
 
-/** Für Fehlermeldungen: welche Variablen fehlen (ohne Werte). */
+/** Resend (HTTPS-API) – auf Railway Hobby empfohlen, da ausgehendes SMTP dort oft gesperrt ist. */
+export function isResendConfigured(): boolean {
+  return Boolean(process.env.RABBIT_RESEND_API_KEY?.trim());
+}
+
+/** Mindestens ein Versandweg (Resend oder SMTP). */
+export function isMailConfigured(): boolean {
+  return isResendConfigured() || isSmtpConfigured();
+}
+
+/** Für Fehlermeldungen: welche SMTP-Variablen fehlen (ohne Werte). */
 export function smtpMissingVars(): string[] {
   const m: string[] = [];
   if (!process.env.RABBIT_SMTP_FROM?.trim()) m.push("RABBIT_SMTP_FROM");
@@ -209,36 +219,83 @@ function nlToBr(s: string): string {
   return escapeHtml(s).replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>");
 }
 
+const RAILWAY_SMTP_HINT =
+  "Railway Hobby/Free: ausgehendes SMTP zu Gmail ist oft gesperrt (Timeout). Lösung: RABBIT_RESEND_API_KEY (HTTPS, resend.com) oder Railway Pro für SMTP.";
+
+async function sendViaResend(opts: { to: string; subject: string; text: string; html: string }): Promise<{ sent: boolean; reason?: string }> {
+  const apiKey = process.env.RABBIT_RESEND_API_KEY!.trim();
+  const from =
+    process.env.RABBIT_RESEND_FROM?.trim() ||
+    process.env.RABBIT_SMTP_FROM?.trim() ||
+    `Rabbit-Technik <${COMPANY.email}>`;
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [opts.to],
+      subject: opts.subject,
+      html: opts.html,
+      text: opts.text,
+    }),
+  });
+  const body = (await r.json().catch(() => ({}))) as { message?: string };
+  if (!r.ok) {
+    return { sent: false, reason: body.message ?? `${r.status} ${r.statusText}` };
+  }
+  return { sent: true };
+}
+
 async function sendSmtp(opts: { to: string; subject: string; text: string; html: string }): Promise<{ sent: boolean; reason?: string }> {
+  if (isResendConfigured()) {
+    try {
+      return await sendViaResend(opts);
+    } catch (e) {
+      return { sent: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   if (!isSmtpConfigured()) {
     const miss = smtpMissingVars().join(", ");
     return {
       sent: false,
-      reason: `SMTP nicht konfiguriert. Fehlend oder leer: ${miss}. Datei server/.env (oder Projekt-Root .env) anlegen – siehe server/.env.example`,
+      reason: `Kein Versand: weder RABBIT_RESEND_API_KEY noch vollständiges SMTP (${miss}). ${RAILWAY_SMTP_HINT} Siehe server/.env.example`,
     };
   }
+
   const from = process.env.RABBIT_SMTP_FROM!.trim();
-  const transporter = createTransporter();
-  await transporter.sendMail({
-    from,
-    to: opts.to,
-    subject: opts.subject,
-    text: opts.text,
-    html: opts.html,
-  });
-  return { sent: true };
+  try {
+    const transporter = createTransporter();
+    await transporter.sendMail({
+      from,
+      to: opts.to,
+      subject: opts.subject,
+      text: opts.text,
+      html: opts.html,
+    });
+    return { sent: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/timeout|ETIMEDOUT|timed out/i.test(msg)) {
+      return { sent: false, reason: `${msg} — ${RAILWAY_SMTP_HINT}` };
+    }
+    return { sent: false, reason: msg };
+  }
 }
 
 /** Probed-Mail (nur manuell / geschützter Endpunkt aufrufen). */
 export async function sendTestProbeEmail(to: string): Promise<{ sent: boolean; reason?: string }> {
-  const subject = `SMTP-Test – ${COMPANY.name}`;
+  const subject = `E-Mail-Test – ${COMPANY.name}`;
   const text = `Dies ist eine Test-E-Mail vom Rabbit-Technik Server.
 
-Wenn Sie diese Nachricht lesen, ist die SMTP-Verbindung in Ordnung.
+Wenn Sie diese Nachricht lesen, funktioniert der Versand (Resend oder SMTP).
 
 ${textFooter()}`;
   const html = `<p>Dies ist eine <strong>Test-E-Mail</strong> vom Rabbit-Technik Server.</p>
-<p>Wenn Sie diese Nachricht lesen, ist die SMTP-Verbindung in Ordnung.</p>
+<p>Wenn Sie diese Nachricht lesen, funktioniert der Versand (Resend oder SMTP).</p>
 ${htmlFooter()}`;
   try {
     const r = await sendSmtp({ to, subject, text, html });

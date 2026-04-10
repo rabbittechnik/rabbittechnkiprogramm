@@ -157,8 +157,10 @@ export function KundenPage() {
           </form>
 
           <div className="pt-4 border-t border-white/10 space-y-2">
-            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">SMTP-Test</h3>
-            <p className="text-xs text-zinc-500">Sendet eine Probed-Mail (Gmail / .env). Empfänger:</p>
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">E-Mail-Test</h3>
+            <p className="text-xs text-zinc-500">
+              Probed-Mail (Resend API oder SMTP). Auf Railway Hobby ohne Resend schlägt Gmail-SMTP oft mit Timeout fehl.
+            </p>
             <div className="flex flex-col gap-2">
               <input
                 type="email"

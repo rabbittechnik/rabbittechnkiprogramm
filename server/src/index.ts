@@ -10,7 +10,7 @@ import { openDatabase } from "./db/init.js";
 import { seedIfEmpty } from "./seed.js";
 import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
-import { isSmtpConfigured, smtpMissingVars } from "./lib/mail.js";
+import { isMailConfigured, isResendConfigured, smtpMissingVars } from "./lib/mail.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -116,12 +116,13 @@ app.listen(PORT, "0.0.0.0", () => {
   if (!hasEnvFile) {
     console.warn(`Konfiguration: keine .env-Datei gefunden. Erwartet: ${envServer} oder ${envRoot}`);
   }
-  if (isSmtpConfigured()) {
-    console.log("E-Mail: SMTP aktiv (Versand möglich)");
+  if (isMailConfigured()) {
+    const mode = isResendConfigured() ? "Resend API" : "SMTP";
+    console.log(`E-Mail: aktiv (${mode})`);
   } else {
     const miss = smtpMissingVars();
     console.warn(
-      `E-Mail: SMTP unvollständig – fehlend/leer: ${miss.join(", ") || "(unbekannt)"}. Vorlage: server/.env.example`
+      `E-Mail: nicht konfiguriert – SMTP fehlt (${miss.join(", ")}). Auf Railway Hobby: RABBIT_RESEND_API_KEY setzen (resend.com) oder Pro für SMTP. Siehe server/.env.example`
     );
   }
 });
