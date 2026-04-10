@@ -14,7 +14,11 @@ import {
  * Sendet eine E-Mail an den Kunden zum aktuellen Auftragsstand (nach DB-Update).
  * Bei Status `fertig`: Fertig-Mail mit Preis; sonst Status-Update mit Teileliste.
  */
-export function queueCustomerRepairNotification(db: Database, repairId: string, zusatzInfo?: string): void {
+export function queueCustomerRepairNotification(
+  db: Database.Database,
+  repairId: string,
+  zusatzInfo?: string
+): void {
   const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(repairId) as
     | {
         id: string;
