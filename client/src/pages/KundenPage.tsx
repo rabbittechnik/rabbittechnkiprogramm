@@ -20,6 +20,9 @@ export function KundenPage() {
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [saving, setSaving] = useState(false);
+  const [testMailTo, setTestMailTo] = useState("");
+  const [testMailBusy, setTestMailBusy] = useState(false);
+  const [testMailMsg, setTestMailMsg] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -57,6 +60,25 @@ export function KundenPage() {
       alert(String(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const sendTestMail = async () => {
+    const to = testMailTo.trim();
+    if (!to) return;
+    setTestMailBusy(true);
+    setTestMailMsg(null);
+    try {
+      const r = await fetchWorkshop<{ ok: boolean; sentTo?: string; error?: string }>("/api/mail/test", {
+        method: "POST",
+        body: JSON.stringify({ to }),
+      });
+      if (r.ok) setTestMailMsg(`Gesendet an ${r.sentTo ?? to}. Postfach prüfen.`);
+      else setTestMailMsg(r.error ?? "Fehler");
+    } catch (e) {
+      setTestMailMsg(String(e));
+    } finally {
+      setTestMailBusy(false);
     }
   };
 
@@ -133,6 +155,29 @@ export function KundenPage() {
               {saving ? "Speichern…" : "Kunde speichern"}
             </button>
           </form>
+
+          <div className="pt-4 border-t border-white/10 space-y-2">
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">SMTP-Test</h3>
+            <p className="text-xs text-zinc-500">Sendet eine Probed-Mail (Gmail / .env). Empfänger:</p>
+            <div className="flex flex-col gap-2">
+              <input
+                type="email"
+                className="rt-input-neon text-sm"
+                placeholder="z. B. rabbit.technik@gmail.com"
+                value={testMailTo}
+                onChange={(e) => setTestMailTo(e.target.value)}
+              />
+              <button
+                type="button"
+                disabled={testMailBusy || !testMailTo.trim()}
+                className="rt-btn-secondary w-full min-h-[44px] text-sm"
+                onClick={() => void sendTestMail()}
+              >
+                {testMailBusy ? "Senden…" : "Test-E-Mail senden"}
+              </button>
+              {testMailMsg && <p className="text-xs text-zinc-400">{testMailMsg}</p>}
+            </div>
+          </div>
         </section>
 
         <section className="xl:col-span-7 rt-panel rt-panel-violet">

@@ -17,7 +17,18 @@ import {
   signWorkshopToken,
   requireWorkshopAuth,
 } from "./lib/workshopAuth.js";
-import { sendRepairConfirmation } from "./lib/mail.js";
+import {
+  sendRepairAcceptedEmail,
+  sendRepairReadyEmail,
+  sendRepairStatusUpdateEmail,
+  sendTestProbeEmail,
+  publicTrackingUrl,
+  formatEuroFromCents,
+  formatVorschaeden,
+  formatTeileListe,
+  formatReparaturDetails,
+  statusLabelDe,
+} from "./lib/mail.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -108,6 +119,21 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     res.json({ token: signWorkshopToken(), workshopAuthRequired: true, expiresInDays: 7 });
+  });
+
+  /** Probed-Mail (nur mit Werkstatt-Token); prüft SMTP inkl. Gmail-App-Passwort */
+  app.post("/api/mail/test", requireWorkshopAuth, async (req, res) => {
+    const to = String(req.body?.to ?? "").trim();
+    if (!to) {
+      res.status(400).json({ error: "Empfänger-Adresse (to) fehlt" });
+      return;
+    }
+    const result = await sendTestProbeEmail(to);
+    if (!result.sent) {
+      res.status(503).json({ ok: false, error: result.reason ?? "Versand fehlgeschlagen" });
+      return;
+    }
+    res.json({ ok: true, sentTo: to });
   });
 
   app.get("/api/services", (_req, res) => {
@@ -304,13 +330,33 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(201).json({ repair: row, tracking_code: tracking });
 
       if (customerForMail.email) {
-        const base = process.env.PUBLIC_TRACKING_URL ?? "http://localhost:5173";
-        const trackingUrl = `${base.replace(/\/$/, "")}/track/${encodeURIComponent(tracking)}`;
-        void sendRepairConfirmation({
+        const repairRow = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(rid) as {
+          description: string | null;
+          problem_label: string | null;
+          accessories: string | null;
+          pre_damage_notes: string | null;
+          total_cents: number;
+        };
+        const deviceRow = db.prepare(`SELECT * FROM devices WHERE id = ?`).get(did) as {
+          device_type: string;
+          brand: string | null;
+          model: string | null;
+        };
+        const fehler =
+          (repairRow.description && repairRow.description.trim()) ||
+          (repairRow.problem_label && repairRow.problem_label.trim()) ||
+          "—";
+        void sendRepairAcceptedEmail({
           to: customerForMail.email,
-          customerName: customerForMail.name,
-          trackingCode: tracking,
-          trackingUrl,
+          kundenname: customerForMail.name,
+          geraetetyp: deviceRow.device_type,
+          marke: deviceRow.brand?.trim() || "—",
+          modell: deviceRow.model?.trim() || "—",
+          fehlerbeschreibung: fehler,
+          vorschaeden: formatVorschaeden(repairRow.pre_damage_notes),
+          zubehoer: repairRow.accessories?.trim() || "—",
+          preisEuro: formatEuroFromCents(repairRow.total_cents),
+          trackingLink: publicTrackingUrl(tracking),
         }).catch((err) => console.error("E-Mail:", err));
       }
     } catch (e) {
@@ -338,12 +384,33 @@ export function registerRoutes(app: Express, db: Database.Database) {
     res.json({ repair, customer, device, services, parts, media });
   });
 
-  app.patch("/api/repairs/:id/status", requireWorkshopAuth, (req, res) => {
+  app.patch("/api/repairs/:id/status", requireWorkshopAuth, async (req, res) => {
     const id = paramStr(req.params.id);
+    const previous = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as
+      | {
+          id: string;
+          status: string;
+          tracking_code: string;
+          customer_id: string;
+          device_id: string;
+          problem_label: string | null;
+          description: string | null;
+          total_cents: number;
+        }
+      | undefined;
+    if (!previous) {
+      res.status(404).json({ error: "Nicht gefunden" });
+      return;
+    }
     const status = String(req.body?.status ?? "");
     const allowed = ["angenommen", "diagnose", "wartet_auf_teile", "in_reparatur", "fertig", "abgeholt"];
     if (!allowed.includes(status)) {
       res.status(400).json({ error: "Ungültiger Status" });
+      return;
+    }
+    if (previous.status === status) {
+      const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id);
+      res.json({ repair });
       return;
     }
     const r = db.prepare(`UPDATE repairs SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, id);
@@ -351,7 +418,57 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(404).json({ error: "Nicht gefunden" });
       return;
     }
-    const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id);
+    const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as typeof previous;
+    const customer = db.prepare(`SELECT * FROM customers WHERE id = ?`).get(repair.customer_id) as
+      | { email: string | null; name: string }
+      | undefined;
+    const device = db.prepare(`SELECT * FROM devices WHERE id = ?`).get(repair.device_id) as
+      | { device_type: string; brand: string | null; model: string | null }
+      | undefined;
+
+    if (customer?.email && device) {
+      const trackingLink = publicTrackingUrl(repair.tracking_code);
+      const parts = db
+        .prepare(`SELECT name, status FROM repair_parts WHERE repair_id = ?`)
+        .all(id) as { name: string; status: string }[];
+      const serviceNames = (
+        db
+          .prepare(`SELECT s.name FROM repair_services rs JOIN services s ON s.id = rs.service_id WHERE rs.repair_id = ?`)
+          .all(id) as { name: string }[]
+      ).map((x) => x.name);
+
+      if (status === "fertig" && previous.status !== "fertig") {
+        void sendRepairReadyEmail({
+          to: customer.email,
+          kundenname: customer.name,
+          geraetetyp: device.device_type,
+          marke: device.brand?.trim() || "—",
+          modell: device.model?.trim() || "—",
+          reparaturDetails: formatReparaturDetails({
+            problemLabel: repair.problem_label,
+            description: repair.description,
+            serviceNames,
+          }),
+          endpreisEuro: formatEuroFromCents(repair.total_cents),
+          trackingLink,
+        }).catch((err) => console.error("E-Mail Fertig:", err));
+      } else if (
+        ["diagnose", "wartet_auf_teile", "in_reparatur"].includes(status) &&
+        status !== previous.status
+      ) {
+        void sendRepairStatusUpdateEmail({
+          to: customer.email,
+          kundenname: customer.name,
+          geraetetyp: device.device_type,
+          marke: device.brand?.trim() || "—",
+          modell: device.model?.trim() || "—",
+          statusAnzeige: statusLabelDe(status),
+          teileListe: formatTeileListe(parts),
+          trackingLink,
+        }).catch((err) => console.error("E-Mail Status:", err));
+      }
+    }
+
     res.json({ repair });
   });
 

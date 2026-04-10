@@ -1,3 +1,4 @@
+import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { openDatabase } from "./db/init.js";
 import { seedIfEmpty } from "./seed.js";
 import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { isSmtpConfigured } from "./lib/mail.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_ROOT = path.join(__dirname, "../data/uploads");
@@ -103,4 +105,9 @@ if (fs.existsSync(CLIENT_DIST)) {
 const PORT = Number(process.env.PORT ?? 8787);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Rabbit-Technik http://0.0.0.0:${PORT} (API + ${fs.existsSync(CLIENT_DIST) ? "SPA" : "nur API"})`);
+  console.log(
+    isSmtpConfigured()
+      ? "E-Mail: SMTP aktiv (Versand möglich)"
+      : "E-Mail: kein SMTP – setze RABBIT_SMTP_* (siehe server/.env.example)"
+  );
 });
