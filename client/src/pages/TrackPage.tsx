@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { fetchJson } from "../api";
 import { RtShell } from "../components/RtShell";
@@ -6,10 +6,26 @@ import { RtShell } from "../components/RtShell";
 const STATUS_LABEL: Record<string, string> = {
   angenommen: "Angenommen",
   diagnose: "Diagnose",
-  wartet_auf_teile: "Wartet auf Teile",
+  wartet_auf_teile: "Warte auf Teile",
   in_reparatur: "In Reparatur",
-  fertig: "Fertig",
+  fertig: "Fertig zur Abholung",
   abgeholt: "Abgeholt",
+};
+
+/** Ausführliche, beruhigende Statuserklärung für Kund:innen */
+const STATUS_ERKLAERUNG: Record<string, string> = {
+  angenommen:
+    "Ihr Gerät wurde ordnungsgemäß angenommen und befindet sich in unserer Werkstatt. Als Nächstes prüfen wir die von Ihnen gemeldeten Symptome und planen die Arbeitsschritte.",
+  diagnose:
+    "Wir untersuchen Ihr Gerät gerade gezielt auf die beschriebenen Probleme. Ziel ist, die technische Ursache zu finden und Ihnen im Anschluss eine belastbare Einschätzung zu geben.",
+  wartet_auf_teile:
+    "Für die Reparatur sind spezielle Ersatzteile notwendig. Diese sind bestellt oder bereits unterwegs. Sobald alle Teile bei uns sind, starten wir unverzüglich mit der weiteren Bearbeitung.",
+  in_reparatur:
+    "Ihr Gerät befindet sich aktuell in aktiver Reparatur. Unsere Techniker arbeiten an der vereinbarten Fehlerbehebung. Bei Rückfragen erreichen Sie uns telefonisch oder per E-Mail.",
+  fertig:
+    "Die Reparatur ist abgeschlossen. Ihr Gerät kann abgeholt werden. Bitte bringen Sie zur Identifikation diesen Auftrag, den Abholschein oder einen gültigen Ausweis mit.",
+  abgeholt:
+    "Dieser Auftrag ist erledigt und das Gerät wurde übergeben. Vielen Dank für Ihr Vertrauen in Rabbit-Technik.",
 };
 
 const PART_STATUS: Record<string, string> = {
@@ -18,6 +34,37 @@ const PART_STATUS: Record<string, string> = {
   angekommen: "Angekommen",
   eingebaut: "Eingebaut",
 };
+
+const WERKSTATT = {
+  name: "Rabbit-Technik",
+  street: "Oberhausenerstr. 20",
+  city: "72411 Bodelshausen",
+  phone: "015172294882",
+};
+
+function formatElapsedSince(iso: string): string {
+  const start = new Date(iso).getTime();
+  if (Number.isNaN(start)) return "—";
+  const ms = Math.max(0, Date.now() - start);
+  const days = Math.floor(ms / 86_400_000);
+  const hours = Math.floor((ms % 86_400_000) / 3_600_000);
+  const mins = Math.floor((ms % 3_600_000) / 60_000);
+  if (days > 0) return `${days} Tag(e), ${hours} Std.`;
+  if (hours > 0) return `${hours} Std., ${mins} Min.`;
+  return `${mins} Min.`;
+}
+
+function paymentLabelDe(ps: string): string {
+  if (ps === "bezahlt") return "Bezahlt";
+  if (ps === "offen") return "Noch offen";
+  return ps;
+}
+
+function firstName(full: string): string {
+  const t = full.trim();
+  if (!t) return "";
+  return t.split(/\s+/)[0] ?? t;
+}
 
 export function TrackPage() {
   const { code: pathCode } = useParams();
@@ -30,8 +77,13 @@ export function TrackPage() {
       total_cents: number;
       payment_status: string;
       updated_at: string;
+      created_at: string;
       problem_label: string | null;
+      description: string | null;
+      accessories: string | null;
     };
+    customer: { name: string };
+    device: { device_type: string; brand: string | null; model: string | null };
     parts: { name: string; status: string; sale_cents: number }[];
     message: string | null;
   } | null>(null);
@@ -58,9 +110,22 @@ export function TrackPage() {
 
   const steps = ["angenommen", "diagnose", "wartet_auf_teile", "in_reparatur", "fertig", "abgeholt"];
 
+  const activeIndex = useMemo(() => {
+    if (!data) return 0;
+    const i = steps.indexOf(data.tracking.status);
+    return i < 0 ? 0 : i;
+  }, [data]);
+
+  const deviceLine = useMemo(() => {
+    if (!data) return "";
+    const { device_type, brand, model } = data.device;
+    const mid = [brand, model].filter(Boolean).join(" ");
+    return mid ? `${device_type} · ${mid}` : device_type;
+  }, [data]);
+
   return (
-    <RtShell title="Auftragsstatus" subtitle="Öffentliche Ansicht für Kund:innen">
-      <div className="max-w-lg mx-auto space-y-6">
+    <RtShell title="Auftragsstatus" subtitle="Ihre Reparatur auf einen Blick">
+      <div className="max-w-2xl mx-auto space-y-6 px-1">
         {!pathCode && (
           <div className="rt-panel rt-panel-cyan flex flex-col sm:flex-row gap-3 p-4">
             <input
@@ -78,59 +143,158 @@ export function TrackPage() {
         {err && <p className="text-red-400 text-center text-sm">{err}</p>}
 
         {data && (
-          <div className="rt-panel rt-panel-violet space-y-6">
-            <div className="text-center">
-              <p className="text-zinc-500 text-xs uppercase tracking-wide">Tracking-Code</p>
-              <p className="font-mono text-2xl text-[#39ff14] drop-shadow-[0_0_12px_rgba(57,255,20,0.35)]">
-                {data.tracking.tracking_code}
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-[#00d4ff]/30 bg-[#0a1220]/95 p-5 sm:p-6 shadow-[0_0_32px_rgba(0,212,255,0.08)]">
+              <p className="text-zinc-400 text-sm mb-1">Hallo {firstName(data.customer.name)},</p>
+              <p className="text-white text-lg font-semibold leading-snug">
+                hier sehen Sie den aktuellen Stand zu Ihrem Auftrag bei {WERKSTATT.name}.
               </p>
+              <div className="mt-4 pt-4 border-t border-white/10 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Name im Auftrag</p>
+                  <p className="text-white font-medium">{data.customer.name}</p>
+                </div>
+                <div>
+                  <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Tracking-Code</p>
+                  <p className="font-mono text-[#39ff14] text-lg drop-shadow-[0_0_10px_rgba(57,255,20,0.35)]">
+                    {data.tracking.tracking_code}
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <p className="text-sm text-zinc-500 mb-2">Fortschritt</p>
-              <div className="flex justify-between text-[10px] sm:text-xs text-zinc-500 mb-1 gap-0.5 overflow-x-auto">
-                {steps.map((s) => (
-                  <span key={s} className={data.tracking.status === s ? "text-[#00d4ff] font-bold whitespace-nowrap" : "whitespace-nowrap"}>
-                    {STATUS_LABEL[s]?.slice(0, 3)}
-                  </span>
-                ))}
+            <div className="rounded-2xl border border-violet-500/25 bg-[#0a1220]/95 p-5 sm:p-6 space-y-4">
+              <h2 className="text-sm font-bold text-violet-200 uppercase tracking-wider">Gerät & Anliegen</h2>
+              <p className="text-white text-base">{deviceLine}</p>
+              {data.tracking.problem_label && (
+                <div>
+                  <p className="text-zinc-500 text-xs mb-1">Vereinbartes Anliegen (Kategorie)</p>
+                  <p className="text-zinc-200">{data.tracking.problem_label}</p>
+                </div>
+              )}
+              {data.tracking.description?.trim() && (
+                <div>
+                  <p className="text-zinc-500 text-xs mb-1">Ihre Beschreibung / Details</p>
+                  <p className="text-zinc-300 text-sm whitespace-pre-wrap">{data.tracking.description}</p>
+                </div>
+              )}
+              {data.tracking.accessories?.trim() && (
+                <div>
+                  <p className="text-zinc-500 text-xs mb-1">Mitgegebenes Zubehör</p>
+                  <p className="text-zinc-300 text-sm">{data.tracking.accessories}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-[#00d4ff]/35 bg-[#0a1220]/95 p-5 sm:p-6 space-y-5">
+              <h2 className="text-sm font-bold text-[#00d4ff] uppercase tracking-wider">Fortschritt</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {steps.map((s, i) => {
+                  const done = i < activeIndex;
+                  const current = i === activeIndex;
+                  return (
+                    <div
+                      key={s}
+                      className={`rounded-xl border px-3 py-2.5 text-center transition-colors ${
+                        current
+                          ? "border-[#00d4ff] bg-[#00d4ff]/10 text-[#7ee8ff] font-semibold shadow-[0_0_16px_rgba(0,212,255,0.2)]"
+                          : done
+                            ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-300/90"
+                            : "border-zinc-700/80 text-zinc-500"
+                      }`}
+                    >
+                      <span className="text-xs sm:text-sm leading-tight block">{STATUS_LABEL[s] ?? s}</span>
+                      {current && <span className="text-[10px] text-[#00d4ff]/80 mt-1 block">aktuell</span>}
+                    </div>
+                  );
+                })}
               </div>
-              <div className="h-2 rounded-full bg-[#060b13] overflow-hidden border border-[#00d4ff]/20">
+              <div className="h-2.5 rounded-full bg-[#060b13] overflow-hidden border border-[#00d4ff]/20">
                 <div
-                  className="h-full bg-gradient-to-r from-[#00d4ff] to-[#9b59b6] transition-all"
+                  className="h-full bg-gradient-to-r from-[#00d4ff] to-[#9b59b6] transition-all duration-500"
                   style={{
-                    width: `${((Math.max(0, steps.indexOf(data.tracking.status)) + 1) / steps.length) * 100}%`,
+                    width: `${((activeIndex + 1) / steps.length) * 100}%`,
                   }}
                 />
               </div>
-              <p className="mt-2 text-center font-semibold text-white">
-                {STATUS_LABEL[data.tracking.status] ?? data.tracking.status}
-              </p>
+              <div className="rounded-xl bg-[#060b13]/80 border border-white/10 p-4">
+                <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">Aktueller Schritt</p>
+                <p className="text-lg font-semibold text-white mb-3">{STATUS_LABEL[data.tracking.status] ?? data.tracking.status}</p>
+                <p className="text-zinc-300 text-sm leading-relaxed">
+                  {STATUS_ERKLAERUNG[data.tracking.status] ??
+                    "Ihr Auftrag wird bearbeitet. Bei Fragen erreichen Sie uns jederzeit."}
+                </p>
+              </div>
             </div>
 
-            <div className="flex justify-between text-sm border-t border-white/10 pt-3">
-              <span className="text-zinc-500">Summe (geschätzt)</span>
-              <span className="font-mono text-[#00d4ff]">{(data.tracking.total_cents / 100).toFixed(2)} €</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-2xl border border-white/10 bg-[#0a1220]/90 p-4">
+                <p className="text-zinc-500 text-xs uppercase tracking-wide mb-1">Bearbeitungszeit bisher</p>
+                <p className="text-white text-lg font-mono">{formatElapsedSince(data.tracking.created_at)}</p>
+                <p className="text-zinc-600 text-xs mt-2">Seit Auftrag vom {new Date(data.tracking.created_at).toLocaleString("de-DE")}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-[#0a1220]/90 p-4">
+                <p className="text-zinc-500 text-xs uppercase tracking-wide mb-1">Letzte Aktualisierung</p>
+                <p className="text-white text-sm">{new Date(data.tracking.updated_at).toLocaleString("de-DE")}</p>
+              </div>
             </div>
 
-            {data.tracking.problem_label && (
-              <p className="text-zinc-400 text-sm text-center">Anliegen: {data.tracking.problem_label}</p>
+            <div className="rounded-2xl border border-[#39ff14]/25 bg-[#0a1220]/95 p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <p className="text-zinc-500 text-xs uppercase tracking-wide">Geschätzte Summe</p>
+                <p className="font-mono text-2xl text-[#00d4ff]">{(data.tracking.total_cents / 100).toFixed(2)} €</p>
+                <p className="text-zinc-500 text-xs mt-1">Zahlung: {paymentLabelDe(data.tracking.payment_status)}</p>
+              </div>
+              <div className="text-sm text-zinc-400 sm:text-right max-w-xs">
+                Der endgültige Preis kann sich je nach Diagnose noch leicht ändern – Sie werden vor größeren Mehrkosten
+                informiert.
+              </div>
+            </div>
+
+            {(data.tracking.status === "fertig" || data.tracking.status === "abgeholt") && (
+              <div className="rounded-2xl border border-amber-500/35 bg-amber-500/5 p-5">
+                <h2 className="text-sm font-bold text-amber-200 uppercase tracking-wider mb-2">Abholung</h2>
+                {data.tracking.status === "fertig" ? (
+                  <>
+                    <p className="text-zinc-200 text-sm mb-3">
+                      Ihr Gerät ist <strong>abholbereit</strong>. Ein fester Abgabetermin liegt uns nicht vor – holen Sie
+                      bitte zu den üblichen Zeiten ab oder rufen Sie kurz an.
+                    </p>
+                    <p className="text-zinc-300 text-sm">
+                      <strong>{WERKSTATT.name}</strong>
+                      <br />
+                      {WERKSTATT.street}
+                      <br />
+                      {WERKSTATT.city}
+                      <br />
+                      Tel.{" "}
+                      <a href={`tel:${WERKSTATT.phone}`} className="text-[#00d4ff] underline">
+                        {WERKSTATT.phone}
+                      </a>
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-zinc-300 text-sm">
+                    Abholung erledigt am {new Date(data.tracking.updated_at).toLocaleString("de-DE")} (letzte Statusänderung).
+                  </p>
+                )}
+              </div>
             )}
 
             {data.message && (
-              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-200 text-sm text-center">
+              <p className="rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-3 text-cyan-100 text-sm leading-relaxed">
                 {data.message}
               </p>
             )}
 
             {data.parts.length > 0 && (
-              <div>
-                <p className="text-sm font-semibold text-violet-300 mb-2">Ersatzteile</p>
+              <div className="rounded-2xl border border-violet-500/25 bg-[#0a1220]/95 p-5">
+                <p className="text-sm font-semibold text-violet-200 mb-3">Ersatzteile zu diesem Auftrag</p>
                 <ul className="space-y-2">
                   {data.parts.map((p, i) => (
-                    <li key={i} className="flex justify-between text-sm border-b border-white/10 pb-2 gap-2">
-                      <span className="text-zinc-300">{p.name}</span>
-                      <span className="text-zinc-400 text-right shrink-0">
+                    <li key={i} className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 border-b border-white/10 pb-2 last:border-0 last:pb-0">
+                      <span className="text-zinc-200">{p.name}</span>
+                      <span className="text-zinc-400 text-sm">
                         {PART_STATUS[p.status] ?? p.status} · {(p.sale_cents / 100).toFixed(2)} €
                       </span>
                     </li>
@@ -139,9 +303,12 @@ export function TrackPage() {
               </div>
             )}
 
-            <div className="text-xs text-zinc-600 text-center">
-              Letzte Aktualisierung: {new Date(data.tracking.updated_at).toLocaleString("de-DE")}
-            </div>
+            <p className="text-center text-xs text-zinc-600">
+              Fragen? Rufen Sie uns an:{" "}
+              <a href={`tel:${WERKSTATT.phone}`} className="text-[#00d4ff]">
+                {WERKSTATT.phone}
+              </a>
+            </p>
           </div>
         )}
       </div>

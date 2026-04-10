@@ -553,21 +553,54 @@ export function registerRoutes(app: Express, db: Database.Database) {
   /** Öffentliches Tracking */
   app.get("/api/track/:code", (req, res) => {
     const code = paramStr(req.params.code).trim();
-    const repair = db.prepare(`SELECT id, tracking_code, status, total_cents, payment_status, updated_at, created_at, problem_label, description FROM repairs WHERE tracking_code = ?`).get(code);
-    if (!repair) {
+    const row = db
+      .prepare(
+        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.updated_at, r.created_at,
+                r.problem_label, r.description, r.accessories,
+                c.name AS customer_name,
+                d.device_type, d.brand, d.model
+         FROM repairs r
+         JOIN customers c ON c.id = r.customer_id
+         JOIN devices d ON d.id = r.device_id
+         WHERE r.tracking_code = ?`
+      )
+      .get(code);
+    if (!row) {
       res.status(404).json({ error: "Code unbekannt" });
       return;
     }
-    const r = repair as { id: string };
+    const repair = row as {
+      id: string;
+      tracking_code: string;
+      status: string;
+      total_cents: number;
+      payment_status: string;
+      updated_at: string;
+      created_at: string;
+      problem_label: string | null;
+      description: string | null;
+      accessories: string | null;
+      customer_name: string;
+      device_type: string;
+      brand: string | null;
+      model: string | null;
+    };
     const parts = db
       .prepare(`SELECT name, status, sale_cents FROM repair_parts WHERE repair_id = ?`)
-      .all(r.id) as { name: string; status: string; sale_cents: number }[];
+      .all(repair.id) as { name: string; status: string; sale_cents: number }[];
+    const { customer_name, device_type, brand, model, ...trackingRest } = repair;
     res.json({
-      tracking: repair,
+      tracking: trackingRest,
+      customer: { name: customer_name },
+      device: {
+        device_type,
+        brand: brand ?? null,
+        model: model ?? null,
+      },
       parts,
       message:
         parts.some((p) => p.status === "bestellt" || p.status === "unterwegs")
-          ? "Reparatur startet nach Eingang der Teile."
+          ? "Sobald alle bestellten Teile bei uns eingetroffen sind, geht es mit der Reparatur weiter."
           : null,
     });
   });
