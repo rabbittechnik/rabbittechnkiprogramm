@@ -27,6 +27,12 @@ function ensureUploadDir() {
   if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
+/** Route-Parameter als string (Express-Typ kann string | string[] sein). */
+export function paramStr(v: string | string[] | undefined): string {
+  if (v === undefined) return "";
+  return Array.isArray(v) ? (v[0] ?? "") : v;
+}
+
 export function registerRoutes(app: Express, db: Database.Database) {
   ensureUploadDir();
 
@@ -293,7 +299,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.get("/api/repairs/:id", requireWorkshopAuth, (req, res) => {
-    const id = req.params.id;
+    const id = paramStr(req.params.id);
     const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id);
     if (!repair) {
       res.status(404).json({ error: "Nicht gefunden" });
@@ -312,7 +318,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.patch("/api/repairs/:id/status", requireWorkshopAuth, (req, res) => {
-    const id = req.params.id;
+    const id = paramStr(req.params.id);
     const status = String(req.body?.status ?? "");
     const allowed = ["angenommen", "diagnose", "wartet_auf_teile", "in_reparatur", "fertig", "abgeholt"];
     if (!allowed.includes(status)) {
@@ -329,7 +335,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.patch("/api/repairs/:id/payment", requireWorkshopAuth, (req, res) => {
-    const id = req.params.id;
+    const id = paramStr(req.params.id);
     const ps = String(req.body?.payment_status ?? "");
     if (ps !== "offen" && ps !== "bezahlt") {
       res.status(400).json({ error: "Ungültig" });
@@ -341,7 +347,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.post("/api/repairs/:id/parts", requireWorkshopAuth, (req, res) => {
-    const repairId = req.params.id;
+    const repairId = paramStr(req.params.id);
     const exists = db.prepare(`SELECT id FROM repairs WHERE id = ?`).get(repairId);
     if (!exists) {
       res.status(404).json({ error: "Auftrag nicht gefunden" });
@@ -365,7 +371,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.patch("/api/repairs/:repairId/parts/:partId", requireWorkshopAuth, (req, res) => {
-    const { repairId, partId } = req.params;
+    const repairId = paramStr(req.params.repairId);
+    const partId = paramStr(req.params.partId);
     const status = String(req.body?.status ?? "");
     const allowed = ["bestellt", "unterwegs", "angekommen", "eingebaut"];
     if (!allowed.includes(status)) {
@@ -386,7 +393,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
   /** Öffentliches Tracking */
   app.get("/api/track/:code", (req, res) => {
-    const code = req.params.code.trim();
+    const code = paramStr(req.params.code).trim();
     const repair = db.prepare(`SELECT id, tracking_code, status, total_cents, payment_status, updated_at, created_at, problem_label, description FROM repairs WHERE tracking_code = ?`).get(code);
     if (!repair) {
       res.status(404).json({ error: "Code unbekannt" });
@@ -408,7 +415,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
   /** Öffentlich per Link nach Annahme (kein Workshop-Login auf dem Tablet) */
   app.get("/api/repairs/:id/invoice.pdf", async (req, res) => {
-    const id = req.params.id;
+    const id = paramStr(req.params.id);
     const inv = db.prepare(`SELECT pdf_path, invoice_number FROM invoices WHERE repair_id = ?`).get(id) as
       | { pdf_path: string | null; invoice_number: string }
       | undefined;
@@ -426,7 +433,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.get("/api/repairs/:id/qr.png", async (req, res) => {
-    const id = req.params.id;
+    const id = paramStr(req.params.id);
     const row = db.prepare(`SELECT tracking_code FROM repairs WHERE id = ?`).get(id) as { tracking_code: string } | undefined;
     if (!row) {
       res.status(404).send("Not found");

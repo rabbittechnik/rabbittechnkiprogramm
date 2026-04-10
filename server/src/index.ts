@@ -7,7 +7,7 @@ import multer from "multer";
 import { nanoid } from "nanoid";
 import { openDatabase } from "./db/init.js";
 import { seedIfEmpty } from "./seed.js";
-import { registerRoutes } from "./routes.js";
+import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 8 * 1024 * 1024 } });
 
 app.post("/api/repairs/:id/media", requireWorkshopAuth, upload.array("files", 12), (req, res) => {
-  const repairId = req.params.id;
+  const repairId = paramStr(req.params.id);
   const exists = db.prepare(`SELECT id FROM repairs WHERE id = ?`).get(repairId);
   if (!exists) {
     res.status(404).json({ error: "Auftrag nicht gefunden" });
