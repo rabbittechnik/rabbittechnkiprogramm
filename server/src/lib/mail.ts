@@ -1,6 +1,7 @@
 import dns from "node:dns";
 import nodemailer from "nodemailer";
 import type { TransportOptions } from "nodemailer";
+import { buildPublicTrackingUrl } from "./publicUrl.js";
 
 /**
  * SMTP-Optionen für nodemailer – bewusst lokal typisiert.
@@ -122,9 +123,9 @@ function createTransporter() {
   return nodemailer.createTransport(opts as TransportOptions);
 }
 
+/** Öffentlicher Tracking-Link (ohne Request-Kontext → siehe `PUBLIC_TRACKING_URL`). */
 export function publicTrackingUrl(trackingCode: string): string {
-  const base = process.env.PUBLIC_TRACKING_URL ?? "http://localhost:5173";
-  return `${base.replace(/\/$/, "")}/track/${encodeURIComponent(trackingCode)}`;
+  return buildPublicTrackingUrl(trackingCode);
 }
 
 /** Deutsche Anzeige: 12,34 */

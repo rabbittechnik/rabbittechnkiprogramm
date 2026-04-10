@@ -30,6 +30,7 @@ import {
   formatReparaturDetails,
   statusLabelDe,
 } from "./lib/mail.js";
+import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -649,8 +650,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(404).send("Not found");
       return;
     }
-    const base = process.env.PUBLIC_TRACKING_URL ?? `http://localhost:5173`;
-    const url = `${base.replace(/\/$/, "")}/track/${encodeURIComponent(row.tracking_code)}`;
+    const url = buildPublicTrackingUrl(row.tracking_code, req);
     const png = await QRCode.toBuffer(url, { type: "png", width: 256, margin: 1 });
     res.type("png").send(png);
   });

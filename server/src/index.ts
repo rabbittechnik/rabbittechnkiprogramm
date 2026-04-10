@@ -25,6 +25,10 @@ const UPLOAD_ROOT = path.join(__dirname, "../data/uploads");
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
 
 const app = express();
+/** Hinter einem Reverse-Proxy (z. B. Railway): HTTPS/Host für öffentliche Links korrekt erkennen */
+if (process.env.RABBIT_TRUST_PROXY !== "0") {
+  app.set("trust proxy", 1);
+}
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "12mb" }));
 
