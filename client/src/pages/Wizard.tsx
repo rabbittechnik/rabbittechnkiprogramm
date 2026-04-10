@@ -37,7 +37,11 @@ export function Wizard() {
   const [preview, setPreview] = useState<{ services: ServiceRow[]; total_cents: number } | null>(null);
   const [partSuggestions, setPartSuggestions] = useState<PartSuggestion[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ tracking: string; id: string } | null>(null);
+  const [done, setDone] = useState<{
+    tracking: string;
+    id: string;
+    confirmationEmailSkipped?: boolean;
+  } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
@@ -228,11 +232,19 @@ export function Wizard() {
           phone: customerPhone || null,
         };
       }
-      const res = await fetchJson<{ repair: { id: string }; tracking_code: string }>("/api/repairs", {
+      const res = await fetchJson<{
+        repair: { id: string };
+        tracking_code: string;
+        confirmationEmailSkipped?: boolean;
+      }>("/api/repairs", {
         method: "POST",
         body: JSON.stringify(body),
       });
-      setDone({ tracking: res.tracking_code, id: res.repair.id });
+      setDone({
+        tracking: res.tracking_code,
+        id: res.repair.id,
+        confirmationEmailSkipped: res.confirmationEmailSkipped,
+      });
     } catch (e) {
       alert(String(e));
     } finally {
@@ -245,6 +257,12 @@ export function Wizard() {
       <div className="min-h-[80vh] flex items-center justify-center rt-dashboard-bg -mx-4 px-4">
         <div className="max-w-lg w-full rounded-2xl border-2 border-[#39ff14]/40 bg-[#0a1220]/95 p-8 text-center space-y-6 shadow-[0_0_40px_rgba(57,255,20,0.15)]">
           <h2 className="font-display text-2xl font-bold text-[#39ff14] drop-shadow-[0_0_12px_rgba(57,255,20,0.5)]">Auftrag gespeichert</h2>
+          {done.confirmationEmailSkipped && (
+            <p className="text-sm text-amber-400/95 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+              Es wurde <strong>keine</strong> Bestätigungs-E-Mail versendet – beim Kunden fehlt eine E-Mail-Adresse.
+              Eintrag in Stammdaten ergänzen oder bei neuer Annahme E-Mail angeben.
+            </p>
+          )}
           <p className="text-zinc-400">Tracking-Code für den Kunden:</p>
           <p className="text-3xl font-mono font-bold tracking-wider text-white">{done.tracking}</p>
           <div className="flex justify-center">
@@ -370,7 +388,7 @@ export function Wizard() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-zinc-500 text-xs">E-Mail</label>
+                <label className="text-zinc-500 text-xs">E-Mail (für Bestätigung nach Annahme)</label>
                 <input
                   type="email"
                   className={`mt-1 w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2 text-white outline-none ${
@@ -379,6 +397,7 @@ export function Wizard() {
                   value={customerEmail}
                   onChange={(e) => setCustomerEmail(e.target.value)}
                   readOnly={Boolean(selectedCustomerId)}
+                  placeholder="name@beispiel.de"
                 />
               </div>
               <div>

@@ -515,3 +515,23 @@ E-Mail: <a href="mailto:${escapeHtml(COMPANY.email)}">${escapeHtml(COMPANY.email
 
   return sendSmtp({ to: opts.to, subject, text, html });
 }
+
+/** Server-Logs für Reparatur-Mails (Promise lehnt nur bei echten Exceptions ab, nicht bei `{ sent: false }`). */
+export function logMailOutcome(
+  kind: string,
+  trackingCode: string,
+  recipient: string | null | undefined,
+  result: Promise<{ sent: boolean; reason?: string }>
+): void {
+  void result
+    .then((r) => {
+      if (r.sent) {
+        console.log(`[mail] ${kind} gesendet → ${recipient ?? "?"} [${trackingCode}]`);
+      } else {
+        console.error(`[mail] ${kind} fehlgeschlagen [${trackingCode}]: ${r.reason ?? "unbekannt"}`);
+      }
+    })
+    .catch((err) => {
+      console.error(`[mail] ${kind} Exception [${trackingCode}]:`, err);
+    });
+}

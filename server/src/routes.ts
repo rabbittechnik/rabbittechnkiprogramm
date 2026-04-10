@@ -22,6 +22,7 @@ import {
   sendRepairReadyEmail,
   sendRepairStatusUpdateEmail,
   sendTestProbeEmail,
+  logMailOutcome,
   publicTrackingUrl,
   formatEuroFromCents,
   formatVorschaeden,
@@ -327,7 +328,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
       db.prepare(`UPDATE invoices SET pdf_path = ? WHERE repair_id = ?`).run(pdfPath, rid);
 
       const row = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(rid);
-      res.status(201).json({ repair: row, tracking_code: tracking });
+      const confirmationEmailSkipped = !customerForMail.email;
+      res.status(201).json({ repair: row, tracking_code: tracking, confirmationEmailSkipped });
 
       if (customerForMail.email) {
         const repairRow = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(rid) as {
@@ -346,18 +348,25 @@ export function registerRoutes(app: Express, db: Database.Database) {
           (repairRow.description && repairRow.description.trim()) ||
           (repairRow.problem_label && repairRow.problem_label.trim()) ||
           "—";
-        void sendRepairAcceptedEmail({
-          to: customerForMail.email,
-          kundenname: customerForMail.name,
-          geraetetyp: deviceRow.device_type,
-          marke: deviceRow.brand?.trim() || "—",
-          modell: deviceRow.model?.trim() || "—",
-          fehlerbeschreibung: fehler,
-          vorschaeden: formatVorschaeden(repairRow.pre_damage_notes),
-          zubehoer: repairRow.accessories?.trim() || "—",
-          preisEuro: formatEuroFromCents(repairRow.total_cents),
-          trackingLink: publicTrackingUrl(tracking),
-        }).catch((err) => console.error("E-Mail:", err));
+        logMailOutcome(
+          "Annahme-Bestätigung",
+          tracking,
+          customerForMail.email,
+          sendRepairAcceptedEmail({
+            to: customerForMail.email,
+            kundenname: customerForMail.name,
+            geraetetyp: deviceRow.device_type,
+            marke: deviceRow.brand?.trim() || "—",
+            modell: deviceRow.model?.trim() || "—",
+            fehlerbeschreibung: fehler,
+            vorschaeden: formatVorschaeden(repairRow.pre_damage_notes),
+            zubehoer: repairRow.accessories?.trim() || "—",
+            preisEuro: formatEuroFromCents(repairRow.total_cents),
+            trackingLink: publicTrackingUrl(tracking),
+          })
+        );
+      } else {
+        console.warn(`[mail] Annahme-Bestätigung übersprungen: keine Kunden-E-Mail [${tracking}]`);
       }
     } catch (e) {
       console.error(e);
@@ -438,35 +447,47 @@ export function registerRoutes(app: Express, db: Database.Database) {
       ).map((x) => x.name);
 
       if (status === "fertig" && previous.status !== "fertig") {
-        void sendRepairReadyEmail({
-          to: customer.email,
-          kundenname: customer.name,
-          geraetetyp: device.device_type,
-          marke: device.brand?.trim() || "—",
-          modell: device.model?.trim() || "—",
-          reparaturDetails: formatReparaturDetails({
-            problemLabel: repair.problem_label,
-            description: repair.description,
-            serviceNames,
-          }),
-          endpreisEuro: formatEuroFromCents(repair.total_cents),
-          trackingLink,
-        }).catch((err) => console.error("E-Mail Fertig:", err));
+        logMailOutcome(
+          "Fertigstellung",
+          repair.tracking_code,
+          customer.email,
+          sendRepairReadyEmail({
+            to: customer.email,
+            kundenname: customer.name,
+            geraetetyp: device.device_type,
+            marke: device.brand?.trim() || "—",
+            modell: device.model?.trim() || "—",
+            reparaturDetails: formatReparaturDetails({
+              problemLabel: repair.problem_label,
+              description: repair.description,
+              serviceNames,
+            }),
+            endpreisEuro: formatEuroFromCents(repair.total_cents),
+            trackingLink,
+          })
+        );
       } else if (
         ["diagnose", "wartet_auf_teile", "in_reparatur"].includes(status) &&
         status !== previous.status
       ) {
-        void sendRepairStatusUpdateEmail({
-          to: customer.email,
-          kundenname: customer.name,
-          geraetetyp: device.device_type,
-          marke: device.brand?.trim() || "—",
-          modell: device.model?.trim() || "—",
-          statusAnzeige: statusLabelDe(status),
-          teileListe: formatTeileListe(parts),
-          trackingLink,
-        }).catch((err) => console.error("E-Mail Status:", err));
+        logMailOutcome(
+          "Status-Update",
+          repair.tracking_code,
+          customer.email,
+          sendRepairStatusUpdateEmail({
+            to: customer.email,
+            kundenname: customer.name,
+            geraetetyp: device.device_type,
+            marke: device.brand?.trim() || "—",
+            modell: device.model?.trim() || "—",
+            statusAnzeige: statusLabelDe(status),
+            teileListe: formatTeileListe(parts),
+            trackingLink,
+          })
+        );
       }
+    } else if (customer && !customer.email) {
+      console.warn(`[mail] Status-E-Mail übersprungen: keine Kunden-E-Mail [${repair.tracking_code}]`);
     }
 
     res.json({ repair });
