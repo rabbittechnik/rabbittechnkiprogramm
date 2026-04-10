@@ -1,6 +1,25 @@
 import dns from "node:dns";
 import nodemailer from "nodemailer";
-import type SMTPTransport from "nodemailer/lib/smtp-transport";
+import type { TransportOptions } from "nodemailer";
+
+/**
+ * SMTP-Optionen für nodemailer – bewusst lokal typisiert.
+ * Subpaths wie `nodemailer/lib/smtp-transport` sind unter moduleResolution NodeNext oft nicht auflösbar (Railway-Build).
+ */
+type MailSmtpOptions = {
+  host: string;
+  port: number;
+  secure: boolean;
+  requireTLS?: boolean;
+  auth?: { user: string; pass: string };
+  tls: { rejectUnauthorized: boolean; minVersion?: string };
+  connectionTimeout: number;
+  greetingTimeout: number;
+  socketTimeout: number;
+  pool: boolean;
+  debug?: boolean;
+  logger?: Pick<typeof console, "info" | "debug" | "warn" | "error">;
+};
 
 /** IPv4 zuerst (Container/Cloud), statt custom lookup – vermeidet TS-Overload-Probleme bei createTransport */
 let smtpDnsOrderApplied = false;
@@ -73,7 +92,7 @@ function createTransporter() {
 
   if (process.env.RABBIT_SMTP_IPV4 !== "0") ensureSmtpPreferIpv4();
 
-  const opts: SMTPTransport.Options = {
+  const opts: MailSmtpOptions = {
     host,
     port,
     secure,
@@ -90,7 +109,7 @@ function createTransporter() {
     opts.logger = console;
   }
 
-  return nodemailer.createTransport(opts);
+  return nodemailer.createTransport(opts as TransportOptions);
 }
 
 export function publicTrackingUrl(trackingCode: string): string {
