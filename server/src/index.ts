@@ -11,6 +11,7 @@ import { ensureServices, seedIfEmpty } from "./seed.js";
 import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
 import { isMailConfigured, isResendConfigured, smtpMissingVars } from "./lib/mail.js";
+import { getPublicTrackingBaseUrl } from "./lib/publicUrl.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -129,5 +130,13 @@ app.listen(PORT, "0.0.0.0", () => {
     console.warn(
       `E-Mail: nicht konfiguriert – SMTP fehlt (${miss.join(", ")}). Auf Railway Hobby: RABBIT_RESEND_API_KEY setzen (resend.com) oder Pro für SMTP. Siehe server/.env.example`
     );
+  }
+  if (isMailConfigured()) {
+    const pub = getPublicTrackingBaseUrl();
+    if (/localhost|127\.0\.0\.1/i.test(pub)) {
+      console.warn(
+        `Öffentliche URL: Tracking-Links in E-Mails zeigen auf "${pub}". Bitte PUBLIC_TRACKING_URL oder RABBIT_PUBLIC_SITE_URL setzen (oder Railway RAILWAY_STATIC_URL / RAILWAY_PUBLIC_DOMAIN).`
+      );
+    }
   }
 });

@@ -604,10 +604,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
       brand: string | null;
       model: string | null;
     };
+    const { id: repairIdForParts, customer_name, device_type, brand, model, ...trackingRest } = repair;
     const parts = db
       .prepare(`SELECT name, status, sale_cents FROM repair_parts WHERE repair_id = ?`)
-      .all(repair.id) as { name: string; status: string; sale_cents: number }[];
-    const { customer_name, device_type, brand, model, ...trackingRest } = repair;
+      .all(repairIdForParts) as { name: string; status: string; sale_cents: number }[];
     res.json({
       tracking: trackingRest,
       customer: { name: customer_name },

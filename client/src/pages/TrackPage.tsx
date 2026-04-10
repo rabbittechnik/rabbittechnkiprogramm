@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { fetchJson } from "../api";
-import { RtShell } from "../components/RtShell";
+import { PublicTrackShell } from "../components/PublicTrackShell";
 
 const STATUS_LABEL: Record<string, string> = {
   angenommen: "Angenommen",
@@ -124,7 +124,7 @@ export function TrackPage() {
   }, [data]);
 
   return (
-    <RtShell title="Auftragsstatus" subtitle="Ihre Reparatur auf einen Blick">
+    <PublicTrackShell title="Auftragsstatus" subtitle="Ihre Reparatur auf einen Blick">
       <div className="max-w-2xl mx-auto space-y-6 px-1">
         {!pathCode && (
           <div className="rt-panel rt-panel-cyan flex flex-col sm:flex-row gap-3 p-4">
@@ -312,6 +312,6 @@ export function TrackPage() {
           </div>
         )}
       </div>
-    </RtShell>
+    </PublicTrackShell>
   );
 }
