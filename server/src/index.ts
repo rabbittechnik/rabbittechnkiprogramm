@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,9 +10,16 @@ import { openDatabase } from "./db/init.js";
 import { seedIfEmpty } from "./seed.js";
 import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
-import { isSmtpConfigured } from "./lib/mail.js";
+import { isSmtpConfigured, smtpMissingVars } from "./lib/mail.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** .env: zuerst Projektroot, dann server/.env (überschreibt) – unabhängig vom Startordner (nicht nur cwd). */
+const envRoot = path.resolve(__dirname, "../../.env");
+const envServer = path.resolve(__dirname, "../.env");
+if (fs.existsSync(envRoot)) dotenv.config({ path: envRoot });
+if (fs.existsSync(envServer)) dotenv.config({ path: envServer, override: true });
+
 const UPLOAD_ROOT = path.join(__dirname, "../data/uploads");
 /** Vite-Build (Production): relativ zu server/dist → ../../client/dist */
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
@@ -105,9 +112,16 @@ if (fs.existsSync(CLIENT_DIST)) {
 const PORT = Number(process.env.PORT ?? 8787);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Rabbit-Technik http://0.0.0.0:${PORT} (API + ${fs.existsSync(CLIENT_DIST) ? "SPA" : "nur API"})`);
-  console.log(
-    isSmtpConfigured()
-      ? "E-Mail: SMTP aktiv (Versand möglich)"
-      : "E-Mail: kein SMTP – setze RABBIT_SMTP_* (siehe server/.env.example)"
-  );
+  const hasEnvFile = fs.existsSync(envRoot) || fs.existsSync(envServer);
+  if (!hasEnvFile) {
+    console.warn(`Konfiguration: keine .env-Datei gefunden. Erwartet: ${envServer} oder ${envRoot}`);
+  }
+  if (isSmtpConfigured()) {
+    console.log("E-Mail: SMTP aktiv (Versand möglich)");
+  } else {
+    const miss = smtpMissingVars();
+    console.warn(
+      `E-Mail: SMTP unvollständig – fehlend/leer: ${miss.join(", ") || "(unbekannt)"}. Vorlage: server/.env.example`
+    );
+  }
 });

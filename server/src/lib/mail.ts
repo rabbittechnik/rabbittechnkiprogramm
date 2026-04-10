@@ -25,6 +25,16 @@ export function isSmtpConfigured(): boolean {
   return Boolean(from && user && pass && host);
 }
 
+/** Für Fehlermeldungen: welche Variablen fehlen (ohne Werte). */
+export function smtpMissingVars(): string[] {
+  const m: string[] = [];
+  if (!process.env.RABBIT_SMTP_FROM?.trim()) m.push("RABBIT_SMTP_FROM");
+  if (!process.env.RABBIT_SMTP_USER?.trim()) m.push("RABBIT_SMTP_USER");
+  if (!process.env.RABBIT_SMTP_PASS?.trim()) m.push("RABBIT_SMTP_PASS");
+  if (!resolveSmtpHost()) m.push("RABBIT_SMTP_HOST oder RABBIT_SMTP_PRESET=gmail");
+  return m;
+}
+
 function createTransporter() {
   const host = resolveSmtpHost();
   if (!host) {
@@ -32,8 +42,8 @@ function createTransporter() {
   }
 
   const port = Number(process.env.RABBIT_SMTP_PORT ?? 587);
-  const user = process.env.RABBIT_SMTP_USER ?? "";
-  const pass = process.env.RABBIT_SMTP_PASS ?? "";
+  const user = (process.env.RABBIT_SMTP_USER ?? "").trim();
+  const pass = (process.env.RABBIT_SMTP_PASS ?? "").trim();
   const explicitSecure = process.env.RABBIT_SMTP_SECURE === "1" || process.env.RABBIT_SMTP_SECURE === "true";
   const isGmail = host === "smtp.gmail.com" || process.env.RABBIT_SMTP_PRESET?.toLowerCase() === "gmail";
 
@@ -150,9 +160,13 @@ function nlToBr(s: string): string {
 
 async function sendSmtp(opts: { to: string; subject: string; text: string; html: string }): Promise<{ sent: boolean; reason?: string }> {
   if (!isSmtpConfigured()) {
-    return { sent: false, reason: "SMTP nicht konfiguriert (RABBIT_SMTP_* siehe server/.env.example)" };
+    const miss = smtpMissingVars().join(", ");
+    return {
+      sent: false,
+      reason: `SMTP nicht konfiguriert. Fehlend oder leer: ${miss}. Datei server/.env (oder Projekt-Root .env) anlegen – siehe server/.env.example`,
+    };
   }
-  const from = process.env.RABBIT_SMTP_FROM!;
+  const from = process.env.RABBIT_SMTP_FROM!.trim();
   const transporter = createTransporter();
   await transporter.sendMail({
     from,
