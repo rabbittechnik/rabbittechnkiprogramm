@@ -12,6 +12,8 @@ import { requireWorkshopAuth } from "./lib/workshopAuth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_ROOT = path.join(__dirname, "../data/uploads");
+/** Vite-Build (Production): relativ zu server/dist → ../../client/dist */
+const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -70,7 +72,35 @@ app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
   res.json(rows);
 });
 
+if (fs.existsSync(CLIENT_DIST)) {
+  const indexHtml = path.join(CLIENT_DIST, "index.html");
+  app.use(express.static(CLIENT_DIST));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    if (req.path.startsWith("/uploads")) {
+      res.status(404).send("Not found");
+      return;
+    }
+    res.sendFile(indexHtml, (err) => {
+      if (err) next(err);
+    });
+  });
+} else {
+  app.get("/", (_req, res) => {
+    res.type("html").send(
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Rabbit-Technik</title></head><body style="font-family:sans-serif;padding:2rem;background:#111;color:#eee">
+      <h1>API läuft – kein Frontend-Build</h1>
+      <p>Ordner <code>client/dist</code> fehlt. Lokal: <code>npm run build</code> im Projektroot ausführen und erneut deployen.</p>
+      <p><a href="/api/health" style="color:#7dd3fc">/api/health</a> prüfen</p>
+      </body></html>`
+    );
+  });
+}
+
 const PORT = Number(process.env.PORT ?? 8787);
-app.listen(PORT, () => {
-  console.log(`Rabbit-Technik API http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Rabbit-Technik http://0.0.0.0:${PORT} (API + ${fs.existsSync(CLIENT_DIST) ? "SPA" : "nur API"})`);
 });
