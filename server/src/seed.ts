@@ -27,20 +27,25 @@ const SERVICES: { code: string; name: string; price_cents: number; sort: number 
   { code: "office_setup", name: "Office & Software nach Wunsch", price_cents: 5900, sort: 125 },
 ];
 
-/** Problem-Key → empfohlene Service-Codes (Vorauswahl; im Wizard änderbar) */
+/**
+ * Problem-Key → empfohlene Service-Codes (Vorauswahl; im Wizard änderbar).
+ * Diagnose/Erstbefund nur, wenn der Fehler unklar oder nicht sauber einzuordnen ist
+ * (z. B. „startet nicht“, „Windows bootet nicht“, Sonstiges). Bei klar umrissenen
+ * Themen (langsam, Display, Software, Daten, Neuinstallation, Wasserschaden) nicht vorselektieren.
+ */
 export const PROBLEM_TO_SERVICES: Record<string, string[]> = {
   startet_nicht: ["diagnose", "hardware", "psu_desktop"],
-  langsam: ["diagnose", "cleaning", "software"],
-  display_defekt: ["display", "diagnose"],
-  software: ["software", "diagnose", "virus_remove"],
-  wasser: ["diagnose", "hardware", "cleaning"],
-  datenrettung: ["backup", "data_recovery_ext", "diagnose"],
+  langsam: ["cleaning", "software"],
+  display_defekt: ["display"],
+  software: ["software", "virus_remove"],
+  wasser: ["hardware", "cleaning"],
+  datenrettung: ["backup", "data_recovery_ext"],
   neuinstallation: ["win_install", "backup"],
   sonstiges: ["diagnose"],
 };
 
 export const PROBLEMS: { key: string; label: string }[] = [
-  { key: "startet_nicht", label: "Startet nicht" },
+  { key: "startet_nicht", label: "Startet nicht / Windows bootet nicht" },
   { key: "langsam", label: "Langsam / hängt" },
   { key: "display_defekt", label: "Display defekt" },
   { key: "software", label: "Software / Windows Fehler" },
