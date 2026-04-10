@@ -1,3 +1,4 @@
+import dns from "node:dns";
 import nodemailer from "nodemailer";
 
 const COMPANY = {
@@ -41,15 +42,33 @@ function createTransporter() {
     throw new Error("SMTP: RABBIT_SMTP_HOST setzen oder RABBIT_SMTP_PRESET=gmail");
   }
 
-  const port = Number(process.env.RABBIT_SMTP_PORT ?? 587);
   const user = (process.env.RABBIT_SMTP_USER ?? "").trim();
   const pass = (process.env.RABBIT_SMTP_PASS ?? "").trim();
   const explicitSecure = process.env.RABBIT_SMTP_SECURE === "1" || process.env.RABBIT_SMTP_SECURE === "true";
   const isGmail = host === "smtp.gmail.com" || process.env.RABBIT_SMTP_PRESET?.toLowerCase() === "gmail";
 
-  /** Gmail: Port 587 = STARTTLS (secure: false + requireTLS). Port 465 = SSL (secure: true). */
-  const secure = explicitSecure || (isGmail && port === 465);
+  /**
+   * Standard Gmail: 465 + SSL – in vielen Cloud-Umgebungen (z. B. Railway) zuverlässiger als 587/STARTTLS.
+   * Bei Timeout: RABBIT_SMTP_PORT=465 belassen oder RABBIT_SMTP_PORT=587 testen.
+   */
+  const defaultPort = isGmail ? 465 : 587;
+  const port = Number(process.env.RABBIT_SMTP_PORT ?? defaultPort);
+
+  /** Gmail: 587 = STARTTLS (secure: false + requireTLS). 465 = SSL (secure: true). */
+  const secure = explicitSecure || port === 465;
   const useStartTls = isGmail && port === 587 && !explicitSecure;
+
+  /** IPv4 erzwingen – reduziert Verbindungs-Timeouts (IPv6/DNS in Containern). Abschalten: RABBIT_SMTP_IPV4=0 */
+  const forceIpv4 = process.env.RABBIT_SMTP_IPV4 !== "0";
+  const lookup = forceIpv4
+    ? (
+        hostname: string,
+        _opts: unknown,
+        cb: (err: NodeJS.ErrnoException | null, address: string, family: number) => void
+      ) => {
+        dns.lookup(hostname, { family: 4 }, cb);
+      }
+    : undefined;
 
   return nodemailer.createTransport({
     host,
@@ -57,7 +76,14 @@ function createTransporter() {
     secure,
     requireTLS: useStartTls || undefined,
     auth: user ? { user, pass } : undefined,
-    tls: { rejectUnauthorized: true },
+    tls: { rejectUnauthorized: true, minVersion: "TLSv1.2" },
+    lookup,
+    connectionTimeout: 90_000,
+    greetingTimeout: 45_000,
+    socketTimeout: 120_000,
+    pool: false,
+    debug: process.env.RABBIT_SMTP_DEBUG === "1",
+    logger: process.env.RABBIT_SMTP_DEBUG === "1" ? console : undefined,
   });
 }
 
