@@ -143,8 +143,6 @@ CREATE TABLE IF NOT EXISTS tagesabschluesse (
   register_balance_eod_cents INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_one_rechnung_per_repair ON invoices(repair_id) WHERE document_kind = 'rechnung';
-CREATE INDEX IF NOT EXISTS idx_invoices_repair_kind ON invoices(repair_id, document_kind);
 CREATE INDEX IF NOT EXISTS idx_tagesabschluesse_date ON tagesabschluesse(business_date DESC);
 
 CREATE TABLE IF NOT EXISTS monatsberichte (
