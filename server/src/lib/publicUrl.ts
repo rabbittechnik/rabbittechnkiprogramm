@@ -68,15 +68,3 @@ export function resolveSumUpWebhookUrl(req?: Pick<Request, "get" | "protocol" | 
   if (!base) return undefined;
   return `${base.replace(/\/$/, "")}/webhook/sumup`;
 }
-
-/**
- * HTTPS-Callback nach SumUp-App (Payment Switch / Tap to Pay).
- * Optional: RABBIT_SUMUP_APP_CALLBACK_URL (volle URL ohne Query).
- */
-export function resolveSumUpAppPaymentCallbackUrl(req?: Pick<Request, "get" | "protocol" | "secure">): string | undefined {
-  const custom = process.env.RABBIT_SUMUP_APP_CALLBACK_URL?.trim();
-  if (custom) return custom.replace(/\/$/, "");
-  const base = getPublicTrackingBaseUrl(req);
-  if (!base) return undefined;
-  return `${base.replace(/\/$/, "")}/api/sumup-payment-callback`;
-}

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { fetchWorkshop } from "../api";
 import { formatDeBerlinDateOnly } from "../lib/formatBerlin";
 import { RtShell } from "../components/RtShell";
+import { TapToPayPhoneAnimation } from "../components/TapToPayPhoneAnimation";
 import { useWorkshopGate } from "../useWorkshopGate";
 
 type Row = {
@@ -56,8 +57,6 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   const [pickupOpen, setPickupOpen] = useState(false);
   const [sumupStep, setSumupStep] = useState<"qr" | "tap" | null>(null);
   const [sumupData, setSumupData] = useState<{
-    mode?: "tap_to_pay";
-    tapToPayUrl?: string;
     sumupUrl?: string;
     payment_url?: string;
     qrDataUrl?: string;
@@ -224,9 +223,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     }
   };
 
-  /** SumUp: Webhook-Fallback – Online-Checkout oder Terminal-Transaktion per API prüfen (alle 45 s + sofort beim Öffnen). */
+  /** SumUp Online: Webhook-Fallback – Checkout-Status per API (alle 45 s + sofort beim QR-Schritt). */
   useEffect(() => {
-    if (!pickupOpen || (sumupStep !== "qr" && sumupStep !== "tap") || !selected?.id) return;
+    if (!pickupOpen || sumupStep !== "qr" || !selected?.id) return;
     const repairId = selected.id;
     const syncOnce = async () => {
       try {
@@ -252,28 +251,21 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     return () => window.clearInterval(t);
   }, [pickupOpen, sumupStep, selected?.id]);
 
-  const startSumupTapToPay = async () => {
-    if (!selected) return;
+  const startSumupTapToPay = () => {
     setPickupErr(null);
-    try {
-      const r = await fetchWorkshop<{ mode?: string; hint: string; tapToPayUrl?: string }>(`/api/repairs/${selected.id}/pickup`, {
-        method: "POST",
-        body: JSON.stringify({ type: "sumup_tap_to_pay" }),
-      });
-      setSumupData({ mode: "tap_to_pay", hint: r.hint, tapToPayUrl: r.tapToPayUrl });
-      setSumupStep("tap");
-    } catch (e) {
-      setPickupErr(String(e));
-    }
+    setSumupStep("tap");
   };
 
-  const completeSumupPickup = async () => {
+  const completeSumupPickup = async (opts?: { tapToPayManual?: boolean }) => {
     if (!selected) return;
     setPickupErr(null);
     try {
       await fetchWorkshop(`/api/repairs/${selected.id}/pickup`, {
         method: "POST",
-        body: JSON.stringify({ type: "sumup_complete" }),
+        body: JSON.stringify({
+          type: "sumup_complete",
+          ...(opts?.tapToPayManual ? { sumup_channel: "tap_to_pay" } : {}),
+        }),
       });
       closePickupModal();
       await reloadSelectedFromServer(selected.id);
@@ -367,7 +359,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                         ? "Überweisung"
                         : r.payment_method === "sumup"
                           ? r.sumup_channel === "tap_to_pay" || r.sumup_channel === "terminal"
-                            ? "SumUp Tap to Pay"
+                            ? "Tap to Pay (Handy)"
                             : "SumUp (Online)"
                           : r.payment_method === "bar"
                             ? "Bar"
@@ -622,15 +614,14 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <button
                   type="button"
                   className="w-full min-h-[48px] rounded-xl border border-emerald-500/45 text-emerald-200 hover:bg-emerald-500/10 text-sm font-medium"
-                  onClick={() => void startSumupTapToPay()}
+                  onClick={() => startSumupTapToPay()}
                 >
-                  Zahlung per Tap to Pay (Kartenzahlung am Smartphone)
+                  SumUp Tap to Pay (Handyzahlung)
                 </button>
                 <p className="text-[11px] text-zinc-600">
-                  Online: API-Key + Merchant-Code. Tap to Pay: Affiliate App-ID + Affiliate-Key, öffentliche HTTPS-URL
-                  (Callback <span className="font-mono text-zinc-500">…/api/sumup-payment-callback</span>). SumUp
-                  Business App auf demselben Gerät. Webhook{" "}
-                  <span className="font-mono text-zinc-500">…/webhook/sumup</span> optional für Online-Karte.
+                  Online-Karte: API-Key + Merchant-Code; Webhook{" "}
+                  <span className="font-mono text-zinc-500">…/webhook/sumup</span>. Tap to Pay: Zahlung extern im SumUp
+                  auf dem Handy, danach Bestätigung im Dialog.
                 </p>
               </>
             ) : sumupStep === "qr" ? (
@@ -679,26 +670,24 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
             ) : (
               <>
                 <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 text-center font-medium">
-                  Tap to Pay (SumUp-App)
+                  SumUp Tap to Pay (Handyzahlung)
                 </p>
-                <p className="text-xs text-zinc-300 leading-relaxed">{sumupData?.hint}</p>
-                {sumupData?.tapToPayUrl && (
-                  <a
-                    href={sumupData.tapToPayUrl}
-                    className="rt-btn-confirm w-full min-h-[48px] text-center flex items-center justify-center no-underline"
-                  >
-                    SumUp-Zahlung in der App öffnen
-                  </a>
-                )}
-                <button type="button" className="rt-btn-confirm w-full min-h-[48px]" onClick={() => void completeSumupPickup()}>
-                  Zahlung erhalten – Abholung abschließen
+                <TapToPayPhoneAnimation />
+                <p className="text-sm text-zinc-200 text-center leading-relaxed px-1">
+                  Bitte führen Sie die Zahlung auf dem Handy über SumUp Tap to Pay durch.
+                </p>
+                <button
+                  type="button"
+                  className="rt-btn-confirm w-full min-h-[52px] text-base"
+                  onClick={() => void completeSumupPickup({ tapToPayManual: true })}
+                >
+                  Zahlung erfolgreich
                 </button>
                 <button
                   type="button"
                   className="w-full text-xs text-zinc-500 hover:text-zinc-300 py-2"
                   onClick={() => {
                     setSumupStep(null);
-                    setSumupData(null);
                   }}
                 >
                   Zurück zur Auswahl

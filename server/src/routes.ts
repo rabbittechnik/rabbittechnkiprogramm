@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Express, Request, Response } from "express";
@@ -34,13 +33,8 @@ import { uploadsDir } from "./lib/dataPaths.js";
 import { getWorkshopStatsOverview } from "./lib/workshopStats.js";
 import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE, transferPurposeFromTracking } from "./lib/paymentInfo.js";
 import { createSumUpHostedCheckout } from "./lib/sumupCheckout.js";
-import { buildSumUpPaymentSwitchUrl } from "./lib/sumupTapToPayUrl.js";
-import { resolveSumUpWebhookUrl, resolveSumUpAppPaymentCallbackUrl } from "./lib/publicUrl.js";
-import {
-  processSumUpWebhookPayload,
-  syncPaymentFromSumUpForeignTxId,
-  syncRepairPaymentFromSumUp,
-} from "./lib/sumupPaidSync.js";
+import { resolveSumUpWebhookUrl } from "./lib/publicUrl.js";
+import { processSumUpWebhookPayload, syncRepairPaymentFromSumUp } from "./lib/sumupPaidSync.js";
 import { appendSumupWebhookLog } from "./lib/sumupWebhookLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -99,34 +93,6 @@ export function registerRoutes(app: Express, db: Database.Database) {
         }
       })();
     });
-  });
-
-  /**
-   * SumUp Payment Switch: Rückkehr aus der SumUp-App nach Tap to Pay (Query smp-status, foreign-tx-id).
-   * Verifizierung: Transaktions-API (Betrag + Status).
-   */
-  app.get("/api/sumup-payment-callback", async (req, res) => {
-    const q = req.query;
-    const foreign = String(q["foreign-tx-id"] ?? "").trim();
-    if (foreign) {
-      try {
-        await syncPaymentFromSumUpForeignTxId(db, foreign);
-      } catch (e) {
-        console.error("[sumup-payment-callback]", e);
-      }
-    }
-    const status = String(q["smp-status"] ?? "").toLowerCase();
-    const ok = status === "success";
-    res
-      .status(200)
-      .type("html")
-      .send(
-        `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>SumUp</title></head><body style="font-family:system-ui,sans-serif;padding:1.5rem;max-width:32rem;margin:auto;background:#0a1220;color:#e4e4e7;">` +
-          `<h1 style="font-size:1.1rem;color:#7ee8ff;">Zahlung ${ok ? "erfolgreich" : "beendet"}</h1>` +
-          `<p style="line-height:1.5;">Sie können dieses Fenster schließen und zur Werkstatt bzw. zum Auftrag zurückkehren. ` +
-          `Der Zahlungsstatus wird im System aktualisiert, sobald SumUp die Transaktion verbucht hat.</p>` +
-          `</body></html>`
-      );
   });
 
   /** Öffentliche Kennzahlen für die Hauptseite */
@@ -582,8 +548,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
   /**
    * Abholung am Tablet: Zahlungsart wählen → Status/Rechnung anpassen.
-   * SumUp Online: type=sumup_link (QR/URL). Tap to Pay: type=sumup_tap_to_pay (SumUp-App / Payment Switch).
-   * Nach Zahlung (automatisch oder manuell): type=sumup_complete.
+   * SumUp Online: type=sumup_link (QR/URL). Tap to Pay: nur manuell im UI; Abschluss mit type=sumup_complete und sumup_channel=tap_to_pay.
    */
   app.post("/api/repairs/:id/pickup", requireWorkshopAuth, async (req, res) => {
     const id = paramStr(req.params.id);
@@ -672,82 +637,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
 
-    if (type === "sumup_tap_to_pay") {
-      if (row.status !== "fertig") {
-        res.status(400).json({ error: "Tap to Pay nur bei Status „fertig zur Abholung“ (vor Abschluss der Abholung)." });
-        return;
-      }
-      const fullRow = db
-        .prepare(
-          `SELECT r.id, r.status, r.total_cents, r.tracking_code, r.payment_status, c.name AS customer_name
-           FROM repairs r JOIN customers c ON c.id = r.customer_id WHERE r.id = ?`
-        )
-        .get(id) as
-        | { id: string; status: string; total_cents: number; tracking_code: string; payment_status: string; customer_name: string }
-        | undefined;
-      if (!fullRow || fullRow.payment_status === "bezahlt") {
-        res.status(400).json({ error: "Auftrag bereits als bezahlt markiert oder nicht gefunden." });
-        return;
-      }
-      const apiKey = process.env.RABBIT_SUMUP_API_KEY?.trim();
-      const merchantCode = process.env.RABBIT_SUMUP_MERCHANT_CODE?.trim();
-      const affiliateAppId = process.env.RABBIT_SUMUP_AFFILIATE_APP_ID?.trim();
-      const affiliateKey = process.env.RABBIT_SUMUP_AFFILIATE_KEY?.trim();
-      if (!apiKey || !merchantCode) {
-        res.status(503).json({
-          error:
-            "SumUp nicht konfiguriert: RABBIT_SUMUP_API_KEY und RABBIT_SUMUP_MERCHANT_CODE setzen (SumUp → Entwickler / Geschäftskonto).",
-        });
-        return;
-      }
-      if (!affiliateAppId || !affiliateKey) {
-        res.status(503).json({
-          error:
-            "Tap to Pay (Payment Switch): RABBIT_SUMUP_AFFILIATE_APP_ID und RABBIT_SUMUP_AFFILIATE_KEY setzen (SumUp → Einstellungen → Für Entwickler → Affiliate Keys; App-ID muss zum Key passen).",
-        });
-        return;
-      }
-      const callbackUrl = resolveSumUpAppPaymentCallbackUrl(req);
-      if (!callbackUrl) {
-        res.status(503).json({
-          error:
-            "Öffentliche Basis-URL fehlt (PUBLIC_TRACKING_URL / RABBIT_PUBLIC_SITE_URL) – für den SumUp-App-Rückruf per HTTPS erforderlich.",
-        });
-        return;
-      }
-      const foreignTxId = randomUUID();
-      const amountMajor = Math.max(0.01, fullRow.total_cents / 100).toFixed(2);
-      try {
-        const tapToPayUrl = buildSumUpPaymentSwitchUrl({
-          amountMajor,
-          currency: "EUR",
-          affiliateKey,
-          appId: affiliateAppId,
-          title: `Rabbit-Technik ${fullRow.tracking_code}`,
-          foreignTxId,
-          callbackSuccessUrl: callbackUrl,
-          callbackFailUrl: callbackUrl,
-        });
-        db.prepare(
-          `UPDATE repairs SET
-             sumup_checkout_id = NULL, sumup_checkout_url = NULL, sumup_channel = 'tap_to_pay',
-             sumup_foreign_tx_id = ?, sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
-             payment_method = 'sumup', updated_at = datetime('now')
-           WHERE id = ?`
-        ).run(foreignTxId, id);
-        res.json({
-          mode: "tap_to_pay",
-          tapToPayUrl,
-          foreign_tx_id: foreignTxId,
-          hint: "Link auf dem Smartphone mit installierter SumUp Business App öffnen. Betrag auswählen bzw. übernehmen und Zahlung per Tap to Pay (Karte ans Telefon halten). Danach Rückkehr zum Browser; der Auftrag wird über Callback und API als „bezahlt“ gesetzt. „Zahlung erhalten“ bleibt als Fallback.",
-        });
-      } catch (e) {
-        res.status(502).json({ error: String(e) });
-      }
-      return;
-    }
-
     if (type === "sumup_complete") {
+      const ch = String((req.body as { sumup_channel?: string })?.sumup_channel ?? "").trim();
+      const tapManual = ch === "tap_to_pay";
       const cur = db.prepare(`SELECT status, payment_status FROM repairs WHERE id = ?`).get(id) as
         | { status: string; payment_status: string }
         | undefined;
@@ -763,9 +655,27 @@ export function registerRoutes(app: Express, db: Database.Database) {
         res.status(400).json({ error: "Abholung mit SumUp nur solange der Auftrag noch „fertig“ ist." });
         return;
       }
-      db.prepare(
-        `UPDATE repairs SET status = 'abgeholt', payment_status = 'bezahlt', payment_method = 'sumup', payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
-      ).run(id);
+      if (tapManual) {
+        db.prepare(
+          `UPDATE repairs SET
+             status = 'abgeholt',
+             payment_status = 'bezahlt',
+             payment_method = 'sumup',
+             sumup_channel = 'tap_to_pay',
+             sumup_checkout_id = NULL,
+             sumup_checkout_url = NULL,
+             sumup_foreign_tx_id = NULL,
+             sumup_terminal_foreign_id = NULL,
+             sumup_terminal_client_transaction_id = NULL,
+             payment_paid_at = datetime('now'),
+             updated_at = datetime('now')
+           WHERE id = ?`
+        ).run(id);
+      } else {
+        db.prepare(
+          `UPDATE repairs SET status = 'abgeholt', payment_status = 'bezahlt', payment_method = 'sumup', payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
+        ).run(id);
+      }
       db.prepare(`UPDATE invoices SET payment_status = 'bezahlt' WHERE repair_id = ?`).run(id);
       await regenerateInvoicePdf();
       res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
@@ -804,7 +714,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
 
-    res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_tap_to_pay, sumup_complete." });
+    res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_complete." });
   });
 
   /**
