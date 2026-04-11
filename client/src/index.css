@@ -6,8 +6,28 @@
   color-scheme: dark;
 }
 
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+  touch-action: manipulation;
+  scroll-behavior: smooth;
+  height: 100%;
+  /* 100dvh für echte Viewport-Höhe auf mobilen Geräten */
+  min-height: 100dvh;
+}
+
+/* Standalone-PWA: Pull-to-Refresh des Browsers unterbinden */
+@media (display-mode: standalone) {
+  body { overscroll-behavior-y: contain; }
+}
+
 body {
   @apply bg-rt-bg text-zinc-100 min-h-screen;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   background-image:
     radial-gradient(ellipse 80% 50% at 50% -20%, rgba(124, 58, 237, 0.15), transparent),
     radial-gradient(ellipse 60% 40% at 100% 0%, rgba(0, 245, 196, 0.08), transparent);
@@ -106,15 +126,16 @@ body {
 }
 
 .rt-btn {
-  @apply min-h-[52px] px-6 rounded-xl font-semibold transition-all active:scale-[0.98];
+  @apply min-h-[52px] px-6 rounded-xl font-semibold transition-all active:scale-[0.97];
   @apply bg-gradient-to-r from-teal-400 to-cyan-400 text-rt-bg shadow-neon;
+  @apply text-base sm:text-lg;
 }
 .rt-btn:disabled {
   @apply opacity-40 cursor-not-allowed shadow-none;
 }
 .rt-btn-secondary {
   @apply min-h-[52px] px-6 rounded-xl font-semibold border border-rt-border bg-rt-card text-zinc-200;
-  @apply hover:border-rt-neon/50 transition-all active:scale-[0.98];
+  @apply hover:border-rt-neon/50 transition-all active:scale-[0.97] text-base;
 }
 
 .rt-card {
@@ -123,7 +144,8 @@ body {
 
 .rt-input {
   @apply w-full min-h-[52px] rounded-xl border border-rt-border bg-black/30 px-4 text-lg outline-none;
-  @apply focus:border-rt-neon focus:ring-1 focus:ring-rt-neon/40 placeholder:text-zinc-600;
+  @apply focus:border-rt-neon focus:ring-2 focus:ring-rt-neon/40 placeholder:text-zinc-600;
+  font-size: 16px; /* iOS: verhindert Auto-Zoom bei Focus */
 }
 
 .rt-label {
@@ -135,8 +157,9 @@ body {
   @apply block text-xs uppercase tracking-wider text-zinc-500 mb-1;
 }
 .rt-input-neon {
-  @apply w-full rounded-lg border border-[#00d4ff]/25 bg-[#060b13] px-3 py-2.5 text-white text-base outline-none min-h-[48px];
-  @apply focus:border-[#00d4ff]/70 focus:ring-1 focus:ring-[#00d4ff]/30 placeholder:text-zinc-600;
+  @apply w-full rounded-xl border border-[#00d4ff]/25 bg-[#060b13] px-4 py-3 text-white outline-none min-h-[52px];
+  @apply focus:border-[#00d4ff]/70 focus:ring-2 focus:ring-[#00d4ff]/30 placeholder:text-zinc-600;
+  font-size: 16px;
 }
 .rt-panel {
   @apply rounded-2xl border-2 bg-[#0a1220]/90 p-4 sm:p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)];
@@ -151,9 +174,10 @@ body {
   @apply border-[#9b59b6]/50 shadow-[0_0_24px_rgba(155,89,182,0.15)];
 }
 .rt-btn-confirm {
-  @apply min-h-[52px] rounded-2xl font-bold flex items-center justify-center gap-2 px-6;
+  @apply min-h-[56px] rounded-2xl font-bold flex items-center justify-center gap-2 px-6;
   @apply bg-gradient-to-b from-[#4dff6e] to-[#1aad2e] text-[#060b13] border border-white/20;
-  @apply shadow-[0_0_28px_rgba(57,255,20,0.35)] active:scale-[0.99] disabled:opacity-50;
+  @apply shadow-[0_0_28px_rgba(57,255,20,0.35)] active:scale-[0.97] disabled:opacity-50;
+  @apply text-base sm:text-lg;
 }
 .rt-table-wrap {
   @apply overflow-x-auto rounded-xl border border-[#00d4ff]/20 bg-[#060b13]/80;
@@ -165,8 +189,71 @@ body {
   @apply px-3 py-3 text-xs uppercase tracking-wide text-zinc-500 border-b border-[#00d4ff]/20 bg-[#0a1220];
 }
 .rt-table td {
-  @apply px-3 py-2.5 border-b border-white/5 text-zinc-300;
+  @apply px-3 py-3 border-b border-white/5 text-zinc-300;
 }
 .rt-table tr:hover td {
   @apply bg-white/[0.03];
+}
+.rt-table tr:active td {
+  @apply bg-[#00d4ff]/5;
+}
+
+/* ── Tablet / Touch-Optimierung ────────────────────────────────────────── */
+
+/* Text in Formularen und Tabellen darf selektiert werden */
+input, textarea, select, td, th, pre, code, .selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 44×44px Minimum Touch-Target (WCAG 2.5.5) */
+button, a, [role="button"], [role="tab"], select {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Inline-Links und kleine Badges: nur vertikales Padding vergrößern */
+a:not([class]),
+.rt-table a {
+  min-height: auto;
+  min-width: auto;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* Seitenwechsel: sanftes Einblenden (natives App-Gefühl) */
+@keyframes rt-page-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.rt-page-enter {
+  animation: rt-page-in .2s ease-out;
+}
+
+/* Focus-Ring: sichtbar nur bei Tastatur (nicht bei Touch) */
+:focus-visible {
+  outline: 2px solid rgba(0, 212, 255, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+@media (pointer: coarse) {
+  /* Touch-Geräte: größere Treffflächen */
+  button, [role="button"] {
+    min-height: 48px;
+  }
+
+  /* Scrollbar ausblenden auf Touch-Geräten (saubereres Vollbild) */
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  /* Listeneinträge besser greifbar */
+  .rt-table td {
+    @apply py-3.5;
+  }
 }

@@ -92,6 +92,18 @@ const tiles: {
     ),
   },
   {
+    to: "/buchhaltung-reports",
+    label: "Buchhaltung & Reports",
+    glowRgb: "255, 190, 90",
+    border: "border-amber-400/55",
+    iconWrap: "from-amber-400/30 to-orange-600/5 text-amber-100 shadow-[0_0_22px_rgba(255,190,90,0.38)]",
+    icon: (
+      <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 7h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+      </svg>
+    ),
+  },
+  {
     to: "/werkstatt",
     label: "Auftragsboard",
     glowRgb: "100, 180, 255",
@@ -100,6 +112,30 @@ const tiles: {
     icon: (
       <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+      </svg>
+    ),
+  },
+  {
+    to: "/monatsbericht",
+    label: "Monatsbericht",
+    glowRgb: "120, 200, 255",
+    border: "border-sky-400/55",
+    iconWrap: "from-sky-400/25 to-blue-700/5 text-sky-100 shadow-[0_0_20px_rgba(120,200,255,0.35)]",
+    icon: (
+      <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+      </svg>
+    ),
+  },
+  {
+    to: "/tagesabschluss",
+    label: "Tagesabschluss",
+    glowRgb: "255, 200, 120",
+    border: "border-orange-300/55",
+    iconWrap: "from-orange-300/25 to-amber-600/5 text-orange-100 shadow-[0_0_20px_rgba(255,200,120,0.35)]",
+    icon: (
+      <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
       </svg>
     ),
   },
@@ -139,7 +175,7 @@ function activityColor(status: string): string {
 function HeroHeader() {
   return (
     <div className="relative w-full mb-8 sm:mb-10">
-      <div className="flex justify-end items-center gap-3 mb-5 sm:mb-0 sm:absolute sm:right-0 sm:top-0 sm:z-20">
+      <div className="flex justify-end items-center gap-2 sm:gap-3 mb-5 sm:mb-0 sm:absolute sm:right-0 sm:top-0 sm:z-20 flex-wrap">
         <span className="text-xs font-hud uppercase tracking-wider text-zinc-500 hidden sm:inline">Tablet</span>
         <div
           className="w-12 h-12 rounded-full border-2 border-[#00d4ff]/70 bg-gradient-to-br from-zinc-600 to-zinc-900 flex items-center justify-center text-sm font-bold text-white shadow-[0_0_22px_rgba(0,212,255,0.45)] ring-2 ring-[#00d4ff]/20 animate-line-glow"
@@ -158,10 +194,15 @@ function HeroHeader() {
           />
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-5 shrink-0">
+        <Link
+          to="/"
+          className="flex flex-col sm:flex-row items-center gap-3 sm:gap-5 shrink-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4ff]/55"
+          title="Zur Hauptseite"
+          aria-label="Rabbit-Technik – Hauptseite"
+        >
           <RabbitMark className="w-14 h-14 sm:w-16 sm:h-16 drop-shadow-[0_0_24px_rgba(255,255,255,0.35)]" />
           <BrandWordmark className="text-center" />
-        </div>
+        </Link>
 
         <div className="hidden sm:flex flex-1 items-center justify-start min-w-0 gap-0">
           <div
@@ -193,7 +234,7 @@ export function Home() {
   }, []);
 
   return (
-    <div className="relative min-h-[calc(100vh-2rem)] rt-dashboard-bg -mx-4 px-4 pt-4 pb-10 overflow-hidden">
+    <div className="relative min-h-[calc(100vh-8rem)] pt-2 pb-10 overflow-hidden">
       <div className="rt-home-scanline pointer-events-none" aria-hidden />
       <div className="relative z-10">
         <header className="max-w-[1400px] mx-auto">

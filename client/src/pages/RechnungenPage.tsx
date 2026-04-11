@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchWorkshop } from "../api";
+import { fetchWorkshop, fetchWorkshopBlob } from "../api";
 import { formatDeBerlin } from "../lib/formatBerlin";
 import { RtShell } from "../components/RtShell";
 import { useWorkshopGate } from "../useWorkshopGate";
@@ -15,8 +15,14 @@ type InvoiceRow = {
   payment_due_at: string | null;
   created_at: string;
   updated_at: string;
+  is_test: number | boolean;
+  invoice_id: string;
   invoice_number: string;
   invoice_created_at: string;
+  invoice_document_status: string;
+  invoice_document_kind: string;
+  invoice_retention_until: string | null;
+  has_storno: number | boolean;
   customer_name: string;
   due_at: string;
   payment_bucket: "bezahlt" | "offen_in_frist" | "offen_ueberfaellig";
@@ -90,6 +96,53 @@ export function RechnungenPage() {
   const setOpen = async (id: string) => {
     await fetchWorkshop(`/api/repairs/${id}/payment`, { method: "PATCH", body: JSON.stringify({ payment_status: "offen" }) });
     await load();
+  };
+
+  const postStorno = async (invoiceId: string) => {
+    const reason = window.prompt("Optional: Grund für die Storno-Rechnung") ?? "";
+    setErr(null);
+    try {
+      const r = await fetchWorkshop<{ ok: boolean; id: string; invoice_number: string }>(
+        `/api/invoices/${encodeURIComponent(invoiceId)}/storno`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        }
+      );
+      const blob = await fetchWorkshopBlob(`/api/invoices/${encodeURIComponent(r.id)}/document.pdf`);
+      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const postKorrektur = async (invoiceId: string) => {
+    const raw = window.prompt("Korrekturbetrag in Cent (z. B. 2500 oder -1200 für Gutschrift)");
+    if (raw == null) return;
+    const delta_cents = Math.round(Number(raw.trim()));
+    if (!Number.isFinite(delta_cents) || delta_cents === 0) {
+      setErr("Korrektur: bitte einen von 0 verschiedenen Cent-Betrag eingeben.");
+      return;
+    }
+    const reason = window.prompt("Optional: Begründung") ?? "";
+    setErr(null);
+    try {
+      const r = await fetchWorkshop<{ ok: boolean; id: string; invoice_number: string }>(
+        `/api/invoices/${encodeURIComponent(invoiceId)}/korrektur`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ delta_cents, reason }),
+        }
+      );
+      const blob = await fetchWorkshopBlob(`/api/invoices/${encodeURIComponent(r.id)}/document.pdf`);
+      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    }
   };
 
   if (gate === "loading") {
@@ -179,7 +232,8 @@ export function RechnungenPage() {
           <Link to="/werkstatt" className="text-[#39ff14] underline">
             Auftragsverwaltung
           </Link>{" "}
-          möglich.
+          möglich. Ausgangsrechnungen werden bei „Fertig“ <strong className="text-zinc-400">final</strong> und danach nur noch per Storno- oder
+          Korrekturrechnung ergänzt (GoBD).
         </p>
 
         <div className="overflow-x-auto rounded-xl border border-[#00d4ff]/20 bg-[#0a1220]/90">
@@ -191,14 +245,21 @@ export function RechnungenPage() {
                 <th className="p-3">Kunde</th>
                 <th className="p-3 text-right">Summe</th>
                 <th className="p-3">Fälligkeit</th>
-                <th className="p-3">Hinweis</th>
+                <th className="p-3">Hinweis / Rechnung</th>
                 <th className="p-3 text-right">Aktionen</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => (
-                <tr key={r.id} className="border-b border-white/5 hover:bg-white/[0.03]">
-                  <td className="p-3 font-mono text-[#00d4ff]">{r.invoice_number}</td>
+                <tr key={`${r.id}-${r.invoice_id}`} className={`border-b border-white/5 hover:bg-white/[0.03] ${r.is_test ? "opacity-60" : ""}`}>
+                  <td className="p-3 font-mono text-[#00d4ff]">
+                    {r.is_test ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="rounded bg-red-500/20 border border-red-500/40 px-1.5 py-0.5 text-[10px] font-bold text-red-300 uppercase tracking-wider">Test</span>
+                        <span>{r.invoice_number}</span>
+                      </span>
+                    ) : r.invoice_number}
+                  </td>
                   <td className="p-3 font-mono text-xs">{r.tracking_code}</td>
                   <td className="p-3 text-zinc-300 max-w-[160px] truncate" title={r.customer_name}>
                     {r.customer_name}
@@ -206,13 +267,24 @@ export function RechnungenPage() {
                   <td className="p-3 text-right font-mono text-white">{euro(r.total_cents)}</td>
                   <td className="p-3 text-xs text-zinc-400 whitespace-nowrap">{formatDue(r.due_at)}</td>
                   <td className="p-3">
-                    {r.payment_bucket === "bezahlt" && <span className="text-emerald-400 text-xs font-medium">Bezahlt</span>}
-                    {r.payment_bucket === "offen_in_frist" && (
-                      <span className="text-amber-200/90 text-xs font-medium">Noch in der 7-Tage-Frist</span>
-                    )}
-                    {r.payment_bucket === "offen_ueberfaellig" && (
-                      <span className="text-red-400 text-xs font-medium">Frist abgelaufen</span>
-                    )}
+                    <div className="space-y-1">
+                      {r.payment_bucket === "bezahlt" && <span className="text-emerald-400 text-xs font-medium">Bezahlt</span>}
+                      {r.payment_bucket === "offen_in_frist" && (
+                        <span className="text-amber-200/90 text-xs font-medium">Noch in der 7-Tage-Frist</span>
+                      )}
+                      {r.payment_bucket === "offen_ueberfaellig" && (
+                        <span className="text-red-400 text-xs font-medium">Frist abgelaufen</span>
+                      )}
+                      <div className="text-[10px] text-zinc-500 space-x-2">
+                        <span className="uppercase">{r.invoice_document_status}</span>
+                        {r.invoice_retention_until && (
+                          <span title="Aufbewahrung (logisch)">Aufbew. bis {formatDue(r.invoice_retention_until)}</span>
+                        )}
+                        {(r.has_storno === true || r.has_storno === 1) && (
+                          <span className="text-amber-300/90">Storno liegt vor</span>
+                        )}
+                      </div>
+                    </div>
                   </td>
                   <td className="p-3 text-right">
                     <div className="flex flex-wrap justify-end gap-2">
@@ -224,6 +296,26 @@ export function RechnungenPage() {
                       >
                         PDF
                       </a>
+                      {r.invoice_document_status === "final" &&
+                        r.invoice_document_kind === "rechnung" &&
+                        !(r.has_storno === true || r.has_storno === 1) && (
+                          <button
+                            type="button"
+                            className="text-xs px-2 py-1 rounded-lg border border-amber-500/50 text-amber-200 hover:bg-amber-500/10"
+                            onClick={() => void postStorno(r.invoice_id)}
+                          >
+                            Storno
+                          </button>
+                        )}
+                      {r.invoice_document_status === "final" && r.invoice_document_kind === "rechnung" && (
+                        <button
+                          type="button"
+                          className="text-xs px-2 py-1 rounded-lg border border-violet-500/45 text-violet-200 hover:bg-violet-500/10"
+                          onClick={() => void postKorrektur(r.invoice_id)}
+                        >
+                          Korrektur
+                        </button>
+                      )}
                       {r.payment_status !== "bezahlt" && (
                         <button
                           type="button"

@@ -2,14 +2,41 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#060b13" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- Apple / iOS -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Rabbit" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Open Graph / Share -->
+    <meta name="description" content="Rabbit-Technik – Werkstatt-App: Reparaturannahme, Auftragsverwaltung, Rechnungen, Buchhaltung." />
+
     <title>Rabbit-Technik – Werkstatt</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Orbitron:wght@500;600;700;800;900&family=Outfit:wght@500;600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
   </head>
-  <body class="antialiased">
-    <div id="root"></div>
+  <body class="antialiased" style="background:#060b13;margin:0">
+    <div id="root">
+      <!-- Inline Splash: sichtbar bis React übernimmt (kein weißer Blitz) -->
+      <div id="rt-splash" style="display:flex;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;flex-direction:column;gap:1.25rem;padding:2rem">
+        <svg width="72" height="72" viewBox="0 0 48 48" fill="none"><ellipse cx="24" cy="28" rx="14" ry="12" fill="white"/><ellipse cx="16" cy="14" rx="5" ry="12" fill="white"/><ellipse cx="32" cy="14" rx="5" ry="12" fill="white"/><circle cx="19" cy="26" r="2.5" fill="#060b13"/><circle cx="29" cy="26" r="2.5" fill="#060b13"/><ellipse cx="24" cy="32" rx="3" ry="2" fill="#ffb8c6" opacity="0.5"/></svg>
+        <div style="color:#00d4ff;font-family:system-ui,sans-serif;font-size:.75rem;letter-spacing:.15em;text-transform:uppercase;opacity:.7">Rabbit Technik</div>
+        <div style="width:2rem;height:2rem;border:2px solid rgba(0,212,255,.25);border-top-color:#00d4ff;border-radius:50%;animation:rt-sp .8s linear infinite"></div>
+        <style>@keyframes rt-sp{to{transform:rotate(360deg)}}</style>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

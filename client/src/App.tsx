@@ -1,40 +1,64 @@
+import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
-import { Home } from "./pages/Home";
-import { Wizard } from "./pages/Wizard";
-import { TrackPage } from "./pages/TrackPage";
-import { Workshop } from "./pages/Workshop";
-import { KundenPage } from "./pages/KundenPage";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
-import { LagerPage } from "./pages/LagerPage";
-import { StatistikPage } from "./pages/StatistikPage";
-import { RechnungenPage } from "./pages/RechnungenPage";
+import { AppShell, PageLoadingFallback } from "./components/AppShell";
+
+// ─── UI Layer (PWA) ────────────────────────────────────────────────────────
+// AppShell = persistente Navigation, Dashboard, Menü „Buchhaltung & Reports",
+// Layout/UX. Wird sofort gerendert und vom Service Worker gecacht.
+
+// ─── Business Layer (lazy-loaded, Code-Split) ──────────────────────────────
+// Jedes Modul wird erst bei Navigation geladen → schneller App-Start,
+// kleinerer initialer Bundle.
+const Home = lazy(() => import("./pages/Home").then((m) => ({ default: m.Home })));
+const Wizard = lazy(() => import("./pages/Wizard").then((m) => ({ default: m.Wizard })));
+const Workshop = lazy(() => import("./pages/Workshop").then((m) => ({ default: m.Workshop })));
+const KundenPage = lazy(() => import("./pages/KundenPage").then((m) => ({ default: m.KundenPage })));
+const TrackPage = lazy(() => import("./pages/TrackPage").then((m) => ({ default: m.TrackPage })));
+const LagerPage = lazy(() => import("./pages/LagerPage").then((m) => ({ default: m.LagerPage })));
+const StatistikPage = lazy(() => import("./pages/StatistikPage").then((m) => ({ default: m.StatistikPage })));
+const RechnungenPage = lazy(() => import("./pages/RechnungenPage").then((m) => ({ default: m.RechnungenPage })));
+const ErpOverlayPage = lazy(() => import("./pages/ErpOverlayPage").then((m) => ({ default: m.ErpOverlayPage })));
+const BuchhaltungReportsPage = lazy(() => import("./pages/BuchhaltungReportsPage").then((m) => ({ default: m.BuchhaltungReportsPage })));
+const TagesabschlussPage = lazy(() => import("./pages/TagesabschlussPage").then((m) => ({ default: m.TagesabschlussPage })));
+const MonatsberichtPage = lazy(() => import("./pages/MonatsberichtPage").then((m) => ({ default: m.MonatsberichtPage })));
+const PlaceholderPage = lazy(() => import("./pages/PlaceholderPage").then((m) => ({ default: m.PlaceholderPage })));
+
+function SuspenseWrap({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<PageLoadingFallback />}>{children}</Suspense>;
+}
 
 export default function App() {
   return (
-    <div className="min-h-screen flex flex-col">
-      <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 py-6">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/annahme" element={<Wizard />} />
-          <Route path="/werkstatt" element={<Workshop />} />
-          <Route path="/auftraege" element={<Workshop pageTitle="Auftragsverwaltung" />} />
-          <Route path="/kunden" element={<KundenPage />} />
-          <Route path="/track" element={<TrackPage />} />
-          <Route path="/track/:code" element={<TrackPage />} />
-          <Route path="/lager" element={<LagerPage />} />
-          <Route path="/rechnungen" element={<RechnungenPage />} />
-          <Route path="/statistik" element={<StatistikPage />} />
-          <Route
-            path="/einstellungen"
-            element={
+    <Routes>
+      {/* AppShell = UI Layer: Header, Navigation, Menü, Offline-Banner, Layout */}
+      <Route element={<AppShell />}>
+        {/* Business Layer: Datengetriebene Seiten */}
+        <Route path="/" element={<SuspenseWrap><Home /></SuspenseWrap>} />
+        <Route path="/annahme" element={<SuspenseWrap><Wizard /></SuspenseWrap>} />
+        <Route path="/werkstatt" element={<SuspenseWrap><Workshop /></SuspenseWrap>} />
+        <Route path="/auftraege" element={<SuspenseWrap><Workshop pageTitle="Auftragsverwaltung" /></SuspenseWrap>} />
+        <Route path="/kunden" element={<SuspenseWrap><KundenPage /></SuspenseWrap>} />
+        <Route path="/track" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
+        <Route path="/track/:code" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
+        <Route path="/lager" element={<SuspenseWrap><LagerPage /></SuspenseWrap>} />
+        <Route path="/rechnungen" element={<SuspenseWrap><RechnungenPage /></SuspenseWrap>} />
+        <Route path="/buchhaltung-erp" element={<SuspenseWrap><ErpOverlayPage /></SuspenseWrap>} />
+        <Route path="/buchhaltung-reports" element={<SuspenseWrap><BuchhaltungReportsPage /></SuspenseWrap>} />
+        <Route path="/tagesabschluss" element={<SuspenseWrap><TagesabschlussPage /></SuspenseWrap>} />
+        <Route path="/monatsbericht" element={<SuspenseWrap><MonatsberichtPage /></SuspenseWrap>} />
+        <Route path="/statistik" element={<SuspenseWrap><StatistikPage /></SuspenseWrap>} />
+        <Route
+          path="/einstellungen"
+          element={
+            <SuspenseWrap>
               <PlaceholderPage
                 title="Einstellungen"
                 description="Firmendaten, Benutzer, Drucklayouts und Anbindungen (E-Mail, APIs) lassen sich später zentral pflegen."
               />
-            }
-          />
-        </Routes>
-      </main>
-    </div>
+            </SuspenseWrap>
+          }
+        />
+      </Route>
+    </Routes>
   );
 }

@@ -2,6 +2,11 @@
  * Gerätebilder: Wikimedia Commons (ohne API-Key), optional Unsplash, Fallback Picsum.
  */
 
+function readProcessEnv(name: string): string | undefined {
+  const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> } };
+  return g.process?.env?.[name];
+}
+
 function picsumFallback(query: string): { image_url: string; source: string } {
   let hash = 0;
   for (let i = 0; i < query.length; i++) hash = (hash * 31 + query.charCodeAt(i)) >>> 0;
@@ -80,8 +85,8 @@ export type DeviceImageResult = {
 };
 
 export async function resolveDeviceImage(query: string): Promise<DeviceImageResult> {
-  const provider = (process.env.RABBIT_DEVICE_IMAGE_PROVIDER ?? "wikimedia").toLowerCase();
-  const unsplashKey = process.env.UNSPLASH_ACCESS_KEY ?? "";
+  const provider = (readProcessEnv("RABBIT_DEVICE_IMAGE_PROVIDER") ?? "wikimedia").toLowerCase();
+  const unsplashKey = readProcessEnv("UNSPLASH_ACCESS_KEY") ?? "";
 
   if (provider === "unsplash" && unsplashKey) {
     const u = await unsplashImageUrl(query, unsplashKey);

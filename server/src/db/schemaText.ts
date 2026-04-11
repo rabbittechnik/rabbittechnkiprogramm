@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS repairs (
   payment_paid_at TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  acceptance_pdf_path TEXT
+  acceptance_pdf_path TEXT,
+  is_test INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS repair_services (
@@ -92,12 +93,18 @@ CREATE TABLE IF NOT EXISTS repair_media (
 
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
-  repair_id TEXT NOT NULL UNIQUE REFERENCES repairs(id) ON DELETE CASCADE,
+  repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,
   invoice_number TEXT NOT NULL UNIQUE,
   pdf_path TEXT,
   total_cents INTEGER NOT NULL,
   payment_status TEXT NOT NULL DEFAULT 'offen',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  document_status TEXT NOT NULL DEFAULT 'entwurf',
+  document_kind TEXT NOT NULL DEFAULT 'rechnung',
+  finalized_at TEXT,
+  retention_until TEXT,
+  pdf_sha256 TEXT,
+  references_invoice_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS signatures (
@@ -115,6 +122,50 @@ CREATE TABLE IF NOT EXISTS part_suggestion_rules (
   notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tagesabschluesse (
+  id TEXT PRIMARY KEY,
+  business_date TEXT NOT NULL UNIQUE,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  total_cents INTEGER NOT NULL,
+  bar_cents INTEGER NOT NULL DEFAULT 0,
+  online_sumup_cents INTEGER NOT NULL DEFAULT 0,
+  tap_to_pay_cents INTEGER NOT NULL DEFAULT 0,
+  ueberweisung_cents INTEGER NOT NULL DEFAULT 0,
+  other_cents INTEGER NOT NULL DEFAULT 0,
+  invoice_count INTEGER NOT NULL DEFAULT 0,
+  transaction_count INTEGER NOT NULL DEFAULT 0,
+  transactions_json TEXT NOT NULL,
+  register_balance_eod_cents INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_one_rechnung_per_repair ON invoices(repair_id) WHERE document_kind = 'rechnung';
+CREATE INDEX IF NOT EXISTS idx_invoices_repair_kind ON invoices(repair_id, document_kind);
+CREATE INDEX IF NOT EXISTS idx_tagesabschluesse_date ON tagesabschluesse(business_date DESC);
+
+CREATE TABLE IF NOT EXISTS monatsberichte (
+  id TEXT PRIMARY KEY,
+  year_month TEXT NOT NULL UNIQUE,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  total_cents INTEGER NOT NULL,
+  bar_cents INTEGER NOT NULL DEFAULT 0,
+  online_sumup_cents INTEGER NOT NULL DEFAULT 0,
+  tap_to_pay_cents INTEGER NOT NULL DEFAULT 0,
+  ueberweisung_cents INTEGER NOT NULL DEFAULT 0,
+  other_cents INTEGER NOT NULL DEFAULT 0,
+  invoice_count INTEGER NOT NULL DEFAULT 0,
+  transaction_count INTEGER NOT NULL DEFAULT 0,
+  parts_purchase_cents INTEGER NOT NULL DEFAULT 0,
+  gross_profit_cents INTEGER NOT NULL,
+  overview_json TEXT NOT NULL,
+  transactions_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_monatsberichte_ym ON monatsberichte(year_month DESC);
 CREATE INDEX IF NOT EXISTS idx_repairs_tracking ON repairs(tracking_code);
 CREATE INDEX IF NOT EXISTS idx_repairs_customer ON repairs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_customer ON devices(customer_id);

@@ -17,6 +17,7 @@ type Row = {
   payment_due_at: string | null;
   updated_at: string;
   created_at: string;
+  is_test?: number | boolean;
   customer_name: string;
   device_type: string;
   brand: string | null;
@@ -335,7 +336,10 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 }`}
               >
                 <div className="flex justify-between gap-2">
-                  <span className="font-mono text-[#00d4ff]">{r.tracking_code}</span>
+                  <span className="font-mono text-[#00d4ff]">
+                    {r.is_test ? <span className="text-red-400 font-bold mr-1 text-[10px] uppercase">Test</span> : null}
+                    {r.tracking_code}
+                  </span>
                   <span className="text-xs text-amber-300/90">{r.status.replace(/_/g, " ")}</span>
                 </div>
                 <p className="text-sm text-zinc-300 mt-1">
@@ -378,7 +382,10 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
           {selected && (
             <div className="space-y-5">
               <div className="flex flex-wrap justify-between gap-2 items-start">
-                <h2 className="font-display font-bold text-lg text-[#00d4ff]">{selected.tracking_code}</h2>
+                <h2 className="font-display font-bold text-lg text-[#00d4ff]">
+                  {selected.is_test && <span className="rounded bg-red-500/20 border border-red-500/40 px-1.5 py-0.5 text-[10px] font-bold text-red-300 uppercase tracking-wider mr-2">Test</span>}
+                  {selected.tracking_code}
+                </h2>
                 <Link
                   to={`/track/${selected.tracking_code}`}
                   className="text-sm text-[#39ff14] underline underline-offset-2"

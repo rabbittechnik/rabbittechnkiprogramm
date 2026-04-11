@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { getSumUpCheckout, type SumUpCheckoutResource } from "./sumupCheckout.js";
 import { getSumUpTransaction, isSumUpTransactionPaid, type SumUpTransactionResource } from "./sumupTransaction.js";
-import { writeInvoicePdf } from "./pdfInvoice.js";
+import { syncPrimaryInvoicePaymentAndPdf } from "./invoiceGobd.js";
 
 export type RepairRowLite = {
   id: string;
@@ -26,19 +26,6 @@ function getSumUpKeys(): { apiKey: string; merchantCode: string } | null {
   const merchantCode = process.env.RABBIT_SUMUP_MERCHANT_CODE?.trim();
   if (!apiKey || !merchantCode) return null;
   return { apiKey, merchantCode };
-}
-
-async function regenerateInvoicePdf(db: Database.Database, repairId: string): Promise<void> {
-  const inv = db.prepare(`SELECT invoice_number FROM invoices WHERE repair_id = ?`).get(repairId) as
-    | { invoice_number: string }
-    | undefined;
-  if (!inv) return;
-  const pdfPath = await writeInvoicePdf(db, repairId, inv.invoice_number);
-  db.prepare(`UPDATE invoices SET pdf_path = ?, payment_status = (SELECT payment_status FROM repairs WHERE id = ?) WHERE repair_id = ?`).run(
-    pdfPath,
-    repairId,
-    repairId
-  );
 }
 
 function amountMatchesRepair(checkout: SumUpCheckoutResource, repair: RepairRowLite): boolean {
@@ -143,9 +130,8 @@ export async function applySumUpPaidCheckout(
      WHERE id = ?`
   ).run(newStatus, repair.id);
 
-  db.prepare(`UPDATE invoices SET payment_status = 'bezahlt' WHERE repair_id = ?`).run(repair.id);
   try {
-    await regenerateInvoicePdf(db, repair.id);
+    await syncPrimaryInvoicePaymentAndPdf(db, repair.id);
   } catch (e) {
     console.error("[sumup paid] Rechnung-PDF konnte nicht neu erzeugt werden:", e);
   }
@@ -201,9 +187,8 @@ export async function applySumUpPaidTapToPayTransaction(
      WHERE id = ?`
   ).run(newStatus, repair.id);
 
-  db.prepare(`UPDATE invoices SET payment_status = 'bezahlt' WHERE repair_id = ?`).run(repair.id);
   try {
-    await regenerateInvoicePdf(db, repair.id);
+    await syncPrimaryInvoicePaymentAndPdf(db, repair.id);
   } catch (e) {
     console.error("[sumup paid] Rechnung-PDF konnte nicht neu erzeugt werden:", e);
   }

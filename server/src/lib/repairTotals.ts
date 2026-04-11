@@ -14,7 +14,12 @@ export function recalculateRepairTotal(db: Database.Database, repairId: string):
     total,
     repairId
   );
-  db.prepare(`UPDATE invoices SET total_cents = ? WHERE repair_id = ?`).run(total, repairId);
+  db.prepare(
+    `UPDATE invoices SET total_cents = ?
+     WHERE repair_id = ?
+       AND document_status = 'entwurf'
+       AND document_kind = 'rechnung'`
+  ).run(total, repairId);
   return total;
 }
 

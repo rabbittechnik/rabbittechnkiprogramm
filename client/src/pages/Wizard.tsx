@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { fetchJson, fetchWorkshop } from "../api";
-import { RabbitMark, BrandWordmark } from "../components/RabbitMark";
 
 const DEVICE_TYPES = ["Laptop", "PC", "Smartphone", "Tablet", "Konsole", "Sonstiges"];
 
@@ -49,7 +48,6 @@ type PartSuggestion = { id: string; name: string; sale_cents: number; score: num
 type StammCustomer = { id: string; name: string; email: string | null; phone: string | null; address: string | null };
 
 export function Wizard() {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [deviceType, setDeviceType] = useState("Laptop");
   const [brand, setBrand] = useState("");
@@ -75,10 +73,12 @@ export function Wizard() {
 
   const [preview, setPreview] = useState<{ services: ServiceRow[]; total_cents: number } | null>(null);
   const [partSuggestions, setPartSuggestions] = useState<PartSuggestion[]>([]);
+  const [isTest, setIsTest] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{
     tracking: string;
     id: string;
+    isTest?: boolean;
     confirmationEmailSkipped?: boolean;
   } | null>(null);
 
@@ -312,6 +312,7 @@ export function Wizard() {
         legal_consent: true,
         signature_data_url,
         service_codes: selectedServiceCodes,
+        is_test: isTest || undefined,
       };
       if (selectedCustomerId) {
         body.customer_id = selectedCustomerId;
@@ -333,6 +334,7 @@ export function Wizard() {
       setDone({
         tracking: res.tracking_code,
         id: res.repair.id,
+        isTest,
         confirmationEmailSkipped: res.confirmationEmailSkipped,
       });
     } catch (e) {
@@ -344,9 +346,17 @@ export function Wizard() {
 
   if (done) {
     return (
-      <div className="min-h-[80vh] flex items-center justify-center rt-dashboard-bg -mx-4 px-4">
+      <div className="min-h-[60vh] flex items-center justify-center">
         <div className="max-w-lg w-full rounded-2xl border-2 border-[#39ff14]/40 bg-[#0a1220]/95 p-8 text-center space-y-6 shadow-[0_0_40px_rgba(57,255,20,0.15)]">
-          <h2 className="font-display text-2xl font-bold text-[#39ff14] drop-shadow-[0_0_12px_rgba(57,255,20,0.5)]">Auftrag gespeichert</h2>
+          <h2 className={`font-display text-2xl font-bold ${done.isTest ? "text-red-400 drop-shadow-[0_0_12px_rgba(255,60,60,0.5)]" : "text-[#39ff14] drop-shadow-[0_0_12px_rgba(57,255,20,0.5)]"}`}>
+            {done.isTest ? "TESTAUFTRAG gespeichert" : "Auftrag gespeichert"}
+          </h2>
+          {done.isTest && (
+            <p className="text-sm text-red-300 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 font-medium">
+              Dies ist ein <strong>Testauftrag</strong> – er erscheint <strong>nicht</strong> in Buchhaltung, DATEV-Export,
+              Tagesabschluss oder Monatsberichten. Rechnungsnummer beginnt mit TEST-.
+            </p>
+          )}
           {done.confirmationEmailSkipped && (
             <p className="text-sm text-amber-400/95 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
               Es wurde <strong>keine</strong> Bestätigungs-E-Mail versendet – beim Kunden fehlt eine E-Mail-Adresse.
@@ -400,45 +410,8 @@ export function Wizard() {
   );
 
   return (
-    <div className="rt-dashboard-bg -mx-4 min-h-[calc(100vh-1rem)] flex flex-col">
-      <header className="relative flex flex-wrap items-center justify-between gap-3 px-4 pt-5 pb-4 border-b border-[#00d4ff]/20 shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
-        <div className="flex items-center gap-3">
-          <Link to="/" className="flex items-center gap-2">
-            <RabbitMark className="w-9 h-9 sm:w-10 sm:h-10" />
-            <BrandWordmark />
-          </Link>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm sm:text-base text-[#00d4ff] font-medium hidden sm:inline">Reparaturannahme</span>
-          <div className="relative">
-            <button
-              type="button"
-              className="p-2 rounded-lg border border-[#00d4ff]/30 text-white hover:bg-white/5"
-              aria-label="Menü"
-              onClick={() => setMenuOpen((o) => !o)}
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl border border-[#00d4ff]/30 bg-[#0a1220] py-2 shadow-xl z-50">
-                <Link to="/" className="block px-4 py-2 text-sm hover:bg-white/5" onClick={() => setMenuOpen(false)}>
-                  Hauptseite
-                </Link>
-                <Link to="/werkstatt" className="block px-4 py-2 text-sm hover:bg-white/5" onClick={() => setMenuOpen(false)}>
-                  Werkstatt
-                </Link>
-                <Link to="/track" className="block px-4 py-2 text-sm hover:bg-white/5" onClick={() => setMenuOpen(false)}>
-                  Kunden-Tracking
-                </Link>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <div className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-4 p-4 max-w-[1600px] mx-auto w-full">
+    <div className="flex flex-col min-h-[calc(100vh-8rem)]">
+      <div className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-4 max-w-[1600px] mx-auto w-full">
         <div className="xl:col-span-4 min-w-0">
         {panel(
           "border-[#00d4ff]/45 shadow-[0_0_24px_rgba(0,212,255,0.12)]",
@@ -765,14 +738,29 @@ export function Wizard() {
             </label>
           </div>
           <div className="flex flex-col justify-end">
+            <label className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isTest}
+                onChange={(e) => setIsTest(e.target.checked)}
+                className="accent-red-500 w-4 h-4"
+              />
+              <span className="text-sm text-red-300 font-medium">
+                Testmodus – Rechnung wird als TEST markiert (nicht in Buchhaltung / DATEV / Berichten)
+              </span>
+            </label>
             <button
               type="button"
               disabled={submitting}
               onClick={() => void submit()}
-              className="w-full min-h-[64px] rounded-2xl font-bold text-lg flex items-center justify-center gap-2 bg-gradient-to-b from-[#4dff6e] to-[#1aad2e] text-[#060b13] shadow-[0_0_28px_rgba(57,255,20,0.45)] border border-white/20 active:scale-[0.99] disabled:opacity-50"
+              className={`w-full min-h-[64px] rounded-2xl font-bold text-lg flex items-center justify-center gap-2 border border-white/20 active:scale-[0.99] disabled:opacity-50 ${
+                isTest
+                  ? "bg-gradient-to-b from-red-400 to-red-600 text-white shadow-[0_0_28px_rgba(255,60,60,0.45)]"
+                  : "bg-gradient-to-b from-[#4dff6e] to-[#1aad2e] text-[#060b13] shadow-[0_0_28px_rgba(57,255,20,0.45)]"
+              }`}
             >
               <span className="w-8 h-8 rounded-full bg-[#060b13]/20 flex items-center justify-center text-[#060b13]">✓</span>
-              {submitting ? "Speichern…" : "Auftrag bestätigen"}
+              {submitting ? "Speichern…" : isTest ? "TESTAUFTRAG bestätigen" : "Auftrag bestätigen"}
             </button>
           </div>
         </div>

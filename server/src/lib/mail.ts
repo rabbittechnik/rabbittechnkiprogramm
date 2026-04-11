@@ -43,6 +43,13 @@ const COMPANY = {
   email: "rabbit.technik@gmail.com",
 } as const;
 
+/** Empfänger für automatische Tages-/Monatsberichte (optional überschreibbar). */
+export function resolveReportRecipient(): string {
+  const e = process.env.RABBIT_REPORT_EMAIL_TO?.trim();
+  if (e && e.includes("@")) return e;
+  return COMPANY.email;
+}
+
 /** Host aus RABBIT_SMTP_HOST oder bei PRESET=gmail automatisch smtp.gmail.com */
 function resolveSmtpHost(): string {
   const trimmed = process.env.RABBIT_SMTP_HOST?.trim();
@@ -420,6 +427,28 @@ async function sendSmtp(opts: {
     }
     return { sent: false, reason: msg };
   }
+}
+
+/**
+ * Interne Berichte (Tagesabschluss, Monatsbericht) – gleicher Versandweg wie Kundenmail (`sendSmtp` → Resend oder SMTP).
+ */
+export async function sendInternalWorkshopReportEmail(opts: {
+  subject: string;
+  text: string;
+  preheader?: string;
+  to?: string;
+}): Promise<{ sent: boolean; reason?: string }> {
+  if (!isMailConfigured()) {
+    return { sent: false, reason: "E-Mail nicht konfiguriert (weder RABBIT_RESEND_API_KEY noch vollständiges SMTP)." };
+  }
+  const to = (opts.to ?? resolveReportRecipient()).trim();
+  const inner = `<tr><td style="padding:22px 24px 8px;">
+    <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#e2e8f0;">Hallo,</p>
+    <p style="margin:0 0 14px;font-size:14px;line-height:1.65;color:#94a3b8;">dies ist ein automatischer Systembericht (Buchhaltung).</p>
+    <div style="font-size:14px;line-height:1.75;color:#cbd5e1;">${nlToBr(opts.text)}</div>
+  </td></tr>`;
+  const html = wrapCustomerEmailHtml(inner, opts.preheader ?? opts.subject);
+  return sendSmtp({ to, subject: opts.subject, text: opts.text, html });
 }
 
 /** Probed-Mail (nur manuell / geschützter Endpunkt aufrufen). */

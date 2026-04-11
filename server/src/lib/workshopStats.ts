@@ -58,23 +58,23 @@ export function getWorkshopStatsOverview(db: Database.Database): WorkshopStatsOv
   };
 
   const revenueCents = {
-    today: (db.prepare(`SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) = date('now')`).get() as { s: number })
+    today: (db.prepare(`SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) = date('now') AND is_test = 0`).get() as { s: number })
       .s,
     last7Days: (
       db
         .prepare(
-          `SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) >= date('now', '-7 days')`
+          `SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) >= date('now', '-7 days') AND is_test = 0`
         )
         .get() as { s: number }
     ).s,
     last30Days: (
       db
         .prepare(
-          `SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) >= date('now', '-30 days')`
+          `SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) >= date('now', '-30 days') AND is_test = 0`
         )
         .get() as { s: number }
     ).s,
-    allTime: (db.prepare(`SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs`).get() as { s: number }).s,
+    allTime: (db.prepare(`SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE is_test = 0`).get() as { s: number }).s,
   };
 
   const avgRow = db
@@ -139,7 +139,7 @@ export function getWorkshopStatsOverview(db: Database.Database): WorkshopStatsOv
   const paymentOnCompleted = db
     .prepare(
       `SELECT payment_status, COUNT(*) as count, COALESCE(SUM(total_cents), 0) as total_cents
-       FROM repairs WHERE status IN ('fertig', 'abgeholt')
+       FROM repairs WHERE status IN ('fertig', 'abgeholt') AND is_test = 0
        GROUP BY payment_status`
     )
     .all() as { payment_status: string; count: number; total_cents: number }[];
@@ -148,7 +148,7 @@ export function getWorkshopStatsOverview(db: Database.Database): WorkshopStatsOv
     .prepare(
       `SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as repairs, COALESCE(SUM(total_cents), 0) as revenue_cents
        FROM repairs
-       WHERE datetime(created_at) >= datetime('now', '-6 months')
+       WHERE datetime(created_at) >= datetime('now', '-6 months') AND is_test = 0
        GROUP BY month
        ORDER BY month ASC`
     )

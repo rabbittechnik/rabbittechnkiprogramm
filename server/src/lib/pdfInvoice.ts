@@ -57,7 +57,10 @@ export async function writeInvoicePdf(
        FROM repairs r
        JOIN customers c ON c.id = r.customer_id
        JOIN devices d ON d.id = r.device_id
-       LEFT JOIN invoices i ON i.repair_id = r.id
+       LEFT JOIN invoices i ON i.id = (
+         SELECT id FROM invoices WHERE repair_id = r.id AND document_kind = 'rechnung'
+         ORDER BY datetime(created_at) DESC LIMIT 1
+       )
        WHERE r.id = ?`
     )
     .get(repairId) as Record<string, unknown> | undefined;
@@ -89,10 +92,19 @@ export async function writeInvoicePdf(
     y -= size + (o.dy ?? 4);
   };
 
-  page.drawRectangle({ x: 0, y: H - 100, width: W, height: 100, color: COL.headerBg });
-  page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: COL.headerStripe });
+  const isTest = Number(repair.is_test) === 1;
 
-  line("RECHNUNG", 9, { color: COL.subtitle, dy: 6 });
+  page.drawRectangle({ x: 0, y: H - 100, width: W, height: 100, color: COL.headerBg });
+  page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: isTest ? rgb(1, 0.3, 0.2) : COL.headerStripe });
+
+  if (isTest) {
+    page.drawText("TESTRECHNUNG – KEIN ZAHLUNGSBELEG", {
+      x: M, y: H - 24, size: 11, font: fontBold, color: rgb(1, 0.3, 0.2),
+    });
+    y -= 14;
+  }
+
+  line(isTest ? "TESTRECHNUNG" : "RECHNUNG", 9, { color: COL.subtitle, dy: 6 });
   y -= 4;
   line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 8 });
   line(`Nr. ${invoiceNumber}`, 11, { bold: true, color: COL.accent, dy: 6 });
@@ -221,6 +233,9 @@ export async function writeInvoicePdf(
   }
 
   y = Math.max(M + 20, y - 6);
+  if (isTest) {
+    line("*** TESTRECHNUNG – NICHT FÜR BUCHHALTUNG / DATEV / BERICHTE ***", 8, { bold: true, color: rgb(1, 0.3, 0.2), dy: 4 });
+  }
   line("Rabbit-Technik · Werkstatt", 8, { color: COL.muted, dy: 2 });
 
   const pdfDir = invoicesDir();

@@ -9,6 +9,16 @@ import { PROBLEMS } from "./seed.js";
 import { getServiceRowsByCodes, getSuggestedServiceCodes, sumServiceCents } from "./lib/pricing.js";
 import { recalculateRepairTotal, syncRepairStatusForParts } from "./lib/repairTotals.js";
 import { writeInvoicePdf } from "./lib/pdfInvoice.js";
+import { writeAdjustmentDocumentPdf } from "./lib/pdfInvoiceAdjustments.js";
+import {
+  finalizePrimaryRechnungOnFertig,
+  getInvoiceById,
+  getPrimaryRechnung,
+  hasStornoForInvoice,
+  setPrimaryInvoicePaymentStatus,
+  sha256File,
+  syncPrimaryInvoicePaymentAndPdf,
+} from "./lib/invoiceGobd.js";
 import { writeAcceptancePdf } from "./lib/pdfAcceptance.js";
 import { makeTrackingCode } from "./lib/trackingCode.js";
 import { resolveDeviceImage } from "./lib/deviceImage.js";
@@ -30,6 +40,7 @@ import {
 import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
 import { queueCustomerRepairNotification } from "./lib/repairCustomerNotify.js";
 import { uploadsDir } from "./lib/dataPaths.js";
+import { runDataBackup } from "./lib/dataBackup.js";
 import { getWorkshopStatsOverview } from "./lib/workshopStats.js";
 import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE, transferPurposeFromTracking } from "./lib/paymentInfo.js";
 import { createSumUpHostedCheckout } from "./lib/sumupCheckout.js";
@@ -98,14 +109,14 @@ export function registerRoutes(app: Express, db: Database.Database) {
   /** Öffentliche Kennzahlen für die Hauptseite */
   app.get("/api/dashboard/summary", (_req, res) => {
     const openRow = db
-      .prepare(`SELECT COUNT(*) as c FROM repairs WHERE status NOT IN ('abgeholt')`)
+      .prepare(`SELECT COUNT(*) as c FROM repairs WHERE status NOT IN ('abgeholt') AND is_test = 0`)
       .get() as { c: number };
     const fertigRow = db
-      .prepare(`SELECT COUNT(*) as c FROM repairs WHERE status IN ('fertig')`)
+      .prepare(`SELECT COUNT(*) as c FROM repairs WHERE status IN ('fertig') AND is_test = 0`)
       .get() as { c: number };
     const revRow = db
       .prepare(
-        `SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) = date('now')`
+        `SELECT COALESCE(SUM(total_cents), 0) as s FROM repairs WHERE date(created_at) = date('now') AND is_test = 0`
       )
       .get() as { s: number };
     const recent = db
@@ -204,6 +215,16 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     res.json({ ok: true, sentTo: to });
+  });
+
+  /** Manueller Snapshot: SQLite + Rechnungs-/Annahme-PDFs + Uploads → Datenwurzel/backups/… */
+  app.post("/api/system/backup", requireWorkshopAuth, async (_req, res) => {
+    const r = await runDataBackup(db);
+    if (!r.ok) {
+      res.status(500).json({ ok: false, error: r.error });
+      return;
+    }
+    res.json({ ok: true, dir: r.dir, at: r.at });
   });
 
   app.get("/api/services", (_req, res) => {
@@ -311,6 +332,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
       const serviceCodes = resolveServiceCodesForRequest(body);
       const serviceRows = getServiceRowsByCodes(db, serviceCodes);
 
+      const isTest = body.is_test === true ? 1 : 0;
+
       const did = nanoid();
       const rid = nanoid();
       const tracking = makeTrackingCode();
@@ -349,8 +372,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
         );
 
         db.prepare(
-          `INSERT INTO repairs (id, tracking_code, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, status, total_cents, payment_status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO repairs (id, tracking_code, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, status, total_cents, payment_status, is_test)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           rid,
           tracking,
@@ -365,7 +388,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
           signatureDataUrl,
           "angenommen",
           0,
-          "offen"
+          "offen",
+          isTest
         );
 
         const insRS = db.prepare(
@@ -387,18 +411,16 @@ export function registerRoutes(app: Express, db: Database.Database) {
         recalculateRepairTotal(db, rid);
 
         const invId = nanoid();
-        const invNo = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${rid.slice(0, 6).toUpperCase()}`;
+        const invPrefix = isTest ? "TEST-INV" : "INV";
+        const invNo = `${invPrefix}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${rid.slice(0, 6).toUpperCase()}`;
         const total = (db.prepare(`SELECT total_cents FROM repairs WHERE id = ?`).get(rid) as { total_cents: number }).total_cents;
         db.prepare(
-          `INSERT INTO invoices (id, repair_id, invoice_number, total_cents, payment_status) VALUES (?,?,?,?,?)`
-        ).run(invId, rid, invNo, total, "offen");
+          `INSERT INTO invoices (id, repair_id, invoice_number, total_cents, payment_status, document_status, document_kind)
+           VALUES (?,?,?,?,?,?,?)`
+        ).run(invId, rid, invNo, total, "offen", "entwurf", "rechnung");
       });
 
       tx();
-
-      const invRow = db.prepare(`SELECT invoice_number FROM invoices WHERE repair_id = ?`).get(rid) as { invoice_number: string };
-      const pdfPath = await writeInvoicePdf(db, rid, invRow.invoice_number);
-      db.prepare(`UPDATE invoices SET pdf_path = ? WHERE repair_id = ?`).run(pdfPath, rid);
 
       let acceptancePdfPath: string | null = null;
       try {
@@ -521,6 +543,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     if (status === "fertig" && previous.status !== "fertig") {
       db.prepare(`UPDATE repairs SET payment_due_at = datetime('now', '+7 days') WHERE id = ?`).run(id);
+      try {
+        await finalizePrimaryRechnungOnFertig(db, id);
+      } catch (e) {
+        console.error("[invoice] Finalisierung bei „fertig“ fehlgeschlagen:", e);
+      }
     }
     const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as typeof previous;
     queueCustomerRepairNotification(db, id);
@@ -542,7 +569,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     } else {
       db.prepare(`UPDATE repairs SET payment_status = ?, payment_paid_at = NULL, updated_at = datetime('now') WHERE id = ?`).run(ps, id);
     }
-    db.prepare(`UPDATE invoices SET payment_status = ? WHERE repair_id = ?`).run(ps, id);
+    setPrimaryInvoicePaymentStatus(db, id, ps);
     res.json({ ok: true });
   });
 
@@ -561,19 +588,6 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(404).json({ error: "Auftrag nicht gefunden" });
       return;
     }
-
-    const regenerateInvoicePdf = async () => {
-      const inv = db.prepare(`SELECT invoice_number FROM invoices WHERE repair_id = ?`).get(id) as
-        | { invoice_number: string }
-        | undefined;
-      if (!inv) return;
-      const pdfPath = await writeInvoicePdf(db, id, inv.invoice_number);
-      db.prepare(`UPDATE invoices SET pdf_path = ?, payment_status = (SELECT payment_status FROM repairs WHERE id = ?) WHERE repair_id = ?`).run(
-        pdfPath,
-        id,
-        id
-      );
-    };
 
     if (type === "sumup_link") {
       if (row.status !== "fertig") {
@@ -676,8 +690,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
           `UPDATE repairs SET status = 'abgeholt', payment_status = 'bezahlt', payment_method = 'sumup', payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
         ).run(id);
       }
-      db.prepare(`UPDATE invoices SET payment_status = 'bezahlt' WHERE repair_id = ?`).run(id);
-      await regenerateInvoicePdf();
+      await syncPrimaryInvoicePaymentAndPdf(db, id);
       res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
       return;
     }
@@ -690,8 +703,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       db.prepare(
         `UPDATE repairs SET status = 'abgeholt', payment_status = 'bezahlt', payment_method = 'bar', payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
       ).run(id);
-      db.prepare(`UPDATE invoices SET payment_status = 'bezahlt' WHERE repair_id = ?`).run(id);
-      await regenerateInvoicePdf();
+      await syncPrimaryInvoicePaymentAndPdf(db, id);
       res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
       return;
     }
@@ -704,12 +716,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
       db.prepare(
         `UPDATE repairs SET status = 'abgeholt', payment_status = 'offen', payment_method = 'ueberweisung', updated_at = datetime('now') WHERE id = ?`
       ).run(id);
-      db.prepare(`UPDATE invoices SET payment_status = 'offen' WHERE repair_id = ?`).run(id);
       const dueRow = db.prepare(`SELECT payment_due_at FROM repairs WHERE id = ?`).get(id) as { payment_due_at: string | null } | undefined;
       if (dueRow && !dueRow.payment_due_at) {
         db.prepare(`UPDATE repairs SET payment_due_at = datetime('now', '+7 days') WHERE id = ?`).run(id);
       }
-      await regenerateInvoicePdf();
+      await syncPrimaryInvoicePaymentAndPdf(db, id);
       res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
       return;
     }
@@ -828,7 +839,15 @@ export function registerRoutes(app: Express, db: Database.Database) {
       .prepare(
         `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at,
                 r.created_at, r.updated_at,
+                r.is_test,
+                i.id AS invoice_id,
                 i.invoice_number, i.created_at AS invoice_created_at,
+                i.document_status AS invoice_document_status,
+                i.document_kind AS invoice_document_kind,
+                i.retention_until AS invoice_retention_until,
+                EXISTS (
+                  SELECT 1 FROM invoices s WHERE s.references_invoice_id = i.id AND s.document_kind = 'storno'
+                ) AS has_storno,
                 c.name AS customer_name,
                 COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days')) AS due_at,
                 CASE
@@ -838,7 +857,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
                   ELSE 'offen_in_frist'
                 END AS payment_bucket
          FROM repairs r
-         JOIN invoices i ON i.repair_id = r.id
+         JOIN invoices i ON i.id = (
+           SELECT id FROM invoices WHERE repair_id = r.id AND document_kind = 'rechnung'
+           ORDER BY datetime(created_at) DESC LIMIT 1
+         )
          JOIN customers c ON c.id = r.customer_id
          WHERE r.status IN ('fertig', 'abgeholt') AND r.total_cents > 0
          ORDER BY
@@ -858,6 +880,155 @@ export function registerRoutes(app: Express, db: Database.Database) {
         lines: PAYMENT_TERMS_LINES_DE,
       },
     });
+  });
+
+  /** Storno- / Korrektur-PDF (Werkstatt) – alle document_kind. */
+  app.get("/api/invoices/:id/document.pdf", requireWorkshopAuth, (req, res) => {
+    const invId = paramStr(req.params.id);
+    const inv = getInvoiceById(db, invId);
+    if (!inv?.pdf_path || !fs.existsSync(inv.pdf_path)) {
+      res.status(404).send("Dokument nicht gefunden");
+      return;
+    }
+    res.sendFile(path.resolve(inv.pdf_path));
+  });
+
+  /** GoBD: Storno-Rechnung zur referenzierten finalen Ausgangsrechnung. */
+  app.post("/api/invoices/:id/storno", requireWorkshopAuth, async (req, res) => {
+    const invId = paramStr(req.params.id);
+    const src = getInvoiceById(db, invId);
+    if (!src) {
+      res.status(404).json({ error: "Rechnung nicht gefunden" });
+      return;
+    }
+    if (src.document_kind !== "rechnung") {
+      res.status(400).json({ error: "Nur Ausgangsrechnungen (rechnung) können storniert werden." });
+      return;
+    }
+    if (src.document_status !== "final") {
+      res.status(400).json({ error: "Storno nur nach Finalisierung (Status „fertig“ / festgeschriebene Rechnung)." });
+      return;
+    }
+    if (hasStornoForInvoice(db, invId)) {
+      res.status(409).json({ error: "Zu dieser Rechnung existiert bereits ein Storno." });
+      return;
+    }
+    const repair = db.prepare(`SELECT tracking_code FROM repairs WHERE id = ?`).get(src.repair_id) as
+      | { tracking_code: string }
+      | undefined;
+    const customer = db
+      .prepare(`SELECT c.name FROM customers c JOIN repairs r ON r.customer_id = c.id WHERE r.id = ?`)
+      .get(src.repair_id) as { name: string } | undefined;
+    if (!repair || !customer) {
+      res.status(404).json({ error: "Auftrag/Kunde nicht gefunden" });
+      return;
+    }
+    const reason = String((req.body as { reason?: string })?.reason ?? "").trim();
+    const stornoId = nanoid();
+    const stornoNo = `STOR-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${nanoid(6).toUpperCase()}`;
+    const amountCents = -Math.abs(src.total_cents);
+    try {
+      const pdfPath = await writeAdjustmentDocumentPdf({
+        invoiceNumber: stornoNo,
+        kind: "storno",
+        referenceInvoiceNumber: src.invoice_number,
+        amountCents,
+        trackingCode: repair.tracking_code,
+        customerName: customer.name,
+        reason: reason || undefined,
+      });
+      const hash = sha256File(pdfPath);
+      db.prepare(
+        `INSERT INTO invoices (
+           id, repair_id, invoice_number, pdf_path, total_cents, payment_status,
+           document_status, document_kind, finalized_at, retention_until, pdf_sha256, references_invoice_id
+         ) VALUES (?,?,?,?,?,?,?, datetime('now'), datetime('now', '+10 years'), ?, ?)`
+      ).run(
+        stornoId,
+        src.repair_id,
+        stornoNo,
+        pdfPath,
+        amountCents,
+        src.payment_status,
+        "final",
+        "storno",
+        hash,
+        src.id
+      );
+      res.status(201).json({ ok: true, id: stornoId, invoice_number: stornoNo });
+    } catch (e) {
+      console.error("[invoice] Storno:", e);
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  /** GoBD: Korrekturrechnung (Differenzbetrag, referenziert Ausgangsrechnung). */
+  app.post("/api/invoices/:id/korrektur", requireWorkshopAuth, async (req, res) => {
+    const invId = paramStr(req.params.id);
+    const src = getInvoiceById(db, invId);
+    if (!src) {
+      res.status(404).json({ error: "Rechnung nicht gefunden" });
+      return;
+    }
+    if (src.document_kind !== "rechnung") {
+      res.status(400).json({ error: "Korrektur nur bezogen auf eine Ausgangsrechnung (rechnung)." });
+      return;
+    }
+    if (src.document_status !== "final") {
+      res.status(400).json({ error: "Korrektur nur nach Finalisierung der Ausgangsrechnung." });
+      return;
+    }
+    const deltaCents = Math.round(Number((req.body as { delta_cents?: unknown })?.delta_cents));
+    if (!Number.isFinite(deltaCents) || deltaCents === 0) {
+      res.status(400).json({ error: "delta_cents (ungleich 0) erforderlich" });
+      return;
+    }
+    const repair = db.prepare(`SELECT tracking_code FROM repairs WHERE id = ?`).get(src.repair_id) as
+      | { tracking_code: string }
+      | undefined;
+    const customer = db
+      .prepare(`SELECT c.name FROM customers c JOIN repairs r ON r.customer_id = c.id WHERE r.id = ?`)
+      .get(src.repair_id) as { name: string } | undefined;
+    if (!repair || !customer) {
+      res.status(404).json({ error: "Auftrag/Kunde nicht gefunden" });
+      return;
+    }
+    const reason = String((req.body as { reason?: string })?.reason ?? "").trim();
+    const kid = nanoid();
+    const kNo = `KOR-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${nanoid(6).toUpperCase()}`;
+    try {
+      const pdfPath = await writeAdjustmentDocumentPdf({
+        invoiceNumber: kNo,
+        kind: "korrektur",
+        referenceInvoiceNumber: src.invoice_number,
+        amountCents: deltaCents,
+        trackingCode: repair.tracking_code,
+        customerName: customer.name,
+        reason: reason || undefined,
+      });
+      const hash = sha256File(pdfPath);
+      db.prepare(
+        `INSERT INTO invoices (
+           id, repair_id, invoice_number, pdf_path, total_cents, payment_status,
+           document_status, document_kind, finalized_at, retention_until, pdf_sha256, references_invoice_id
+         ) VALUES (?,?,?,?,?,?,?, datetime('now'), datetime('now', '+10 years'), ?, ?)`
+      ).run(
+        kid,
+        src.repair_id,
+        kNo,
+        pdfPath,
+        deltaCents,
+        "offen",
+        "final",
+        "korrektur",
+        hash,
+        src.id
+      );
+      res.status(201).json({ ok: true, id: kid, invoice_number: kNo });
+    } catch (e) {
+      console.error("[invoice] Korrektur:", e);
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   app.post("/api/repairs/:id/parts", requireWorkshopAuth, (req, res) => {
@@ -1093,7 +1264,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
          FROM repairs r
          JOIN customers c ON c.id = r.customer_id
          JOIN devices d ON d.id = r.device_id
-         LEFT JOIN invoices i ON i.repair_id = r.id
+         LEFT JOIN invoices i ON i.id = (
+           SELECT id FROM invoices WHERE repair_id = r.id AND document_kind = 'rechnung'
+           ORDER BY datetime(created_at) DESC LIMIT 1
+         )
          WHERE r.tracking_code = ?`;
     let row = db.prepare(trackSql).get(code);
     if (!row) {
@@ -1183,20 +1357,22 @@ export function registerRoutes(app: Express, db: Database.Database) {
   /** Öffentlich per Link nach Annahme (kein Workshop-Login auf dem Tablet) */
   app.get("/api/repairs/:id/invoice.pdf", async (req, res) => {
     const id = paramStr(req.params.id);
-    const inv = db.prepare(`SELECT pdf_path, invoice_number FROM invoices WHERE repair_id = ?`).get(id) as
-      | { pdf_path: string | null; invoice_number: string }
-      | undefined;
-    if (!inv?.pdf_path || !fs.existsSync(inv.pdf_path)) {
-      if (inv) {
-        const p = await writeInvoicePdf(db, id, inv.invoice_number);
-        db.prepare(`UPDATE invoices SET pdf_path = ? WHERE repair_id = ?`).run(p, id);
-        res.sendFile(path.resolve(p));
-        return;
-      }
+    const inv = getPrimaryRechnung(db, id);
+    if (!inv) {
       res.status(404).send("Keine Rechnung");
       return;
     }
-    res.sendFile(path.resolve(inv.pdf_path));
+    if (inv.document_status === "final") {
+      if (!inv.pdf_path || !fs.existsSync(inv.pdf_path)) {
+        res.status(404).send("Rechnungs-PDF fehlt (revisionssicher gespeichert).");
+        return;
+      }
+      res.sendFile(path.resolve(inv.pdf_path));
+      return;
+    }
+    const p = await writeInvoicePdf(db, id, inv.invoice_number);
+    db.prepare(`UPDATE invoices SET pdf_path = ? WHERE id = ?`).run(p, inv.id);
+    res.sendFile(path.resolve(p));
   });
 
   /** Gespeicherte Auftragsbestätigung (PDF mit Unterschrift) – nur Werkstatt */

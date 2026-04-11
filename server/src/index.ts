@@ -9,6 +9,12 @@ import { nanoid } from "nanoid";
 import { openDatabase } from "./db/init.js";
 import { ensureServices, seedIfEmpty } from "./seed.js";
 import { registerRoutes, paramStr } from "./routes.js";
+import { registerErpOverlayRoutes } from "./erp/overlayRoutes.js";
+import { registerDayClosingRoutes } from "./dayClosingRoutes.js";
+import { registerMonthReportRoutes } from "./monthReportRoutes.js";
+import { startDayClosingScheduler } from "./lib/dayClosingScheduler.js";
+import { startDataBackupScheduler } from "./lib/dataBackupScheduler.js";
+import { isAutomaticDataBackupWanted } from "./lib/dataBackup.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
 import { isMailConfigured, isResendConfigured, smtpMissingVars } from "./lib/mail.js";
 import { getPublicTrackingBaseUrl } from "./lib/publicUrl.js";
@@ -40,15 +46,21 @@ ensureServices(db);
 
 const dataRoot = getDataRoot();
 const dbPath = getDbFilePath();
-console.log(`[data] RABBIT_DATA_DIR=${process.env.RABBIT_DATA_DIR ?? "(nicht gesetzt → Projekt-data, bei Railway oft flüchtig)"}`);
+console.log(`[data] RABBIT_DATA_DIR=${process.env.RABBIT_DATA_DIR ?? "(nicht gesetzt)"}`);
 console.log(`[data] effektives Datenverzeichnis: ${dataRoot}`);
 console.log(`[data] SQLite-Datei: ${dbPath}`);
+if (dataRoot === path.resolve("/data")) {
+  console.log("[data] Persistenz: /data (Volume) – Kunden, Aufträge, Rechnungen, Zahlungen, Abschlüsse/Berichte (SQLite) und Dateien liegen hier.");
+}
 if (process.env.RAILWAY_ENVIRONMENT && !process.env.RABBIT_DATA_DIR?.trim() && !process.env.RABBIT_DB_PATH?.trim()) {
   console.warn(
     "[data] Railway: Ohne RABBIT_DATA_DIR oder RABBIT_DB_PATH auf ein Volume zeigt die DB ins Image – Deploy kann Daten leeren. Volume z. B. /data mounten und RABBIT_DATA_DIR=/data setzen."
   );
 }
 registerRoutes(app, db);
+registerErpOverlayRoutes(app, db);
+registerDayClosingRoutes(app, db);
+registerMonthReportRoutes(app, db);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -89,6 +101,7 @@ app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
   const rows = db
     .prepare(
       `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
+       r.is_test,
        c.name as customer_name, d.device_type, d.brand, d.model
        FROM repairs r
        JOIN customers c ON c.id = r.customer_id
@@ -167,5 +180,10 @@ app.listen(PORT, "0.0.0.0", () => {
         `Öffentliche URL: Tracking-Links in E-Mails zeigen auf "${pub}". Bitte PUBLIC_TRACKING_URL oder RABBIT_PUBLIC_SITE_URL setzen (oder Railway RAILWAY_STATIC_URL / RAILWAY_PUBLIC_DOMAIN).`
       );
     }
+  }
+  startDayClosingScheduler(db);
+  startDataBackupScheduler(db);
+  if (isAutomaticDataBackupWanted()) {
+    console.log("[backup] Geplante Snapshots aktiv (siehe RABBIT_BACKUP_* in server/.env.example).");
   }
 });
