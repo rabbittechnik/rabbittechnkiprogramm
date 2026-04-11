@@ -15,6 +15,8 @@ export function openDatabase(): Database.Database {
   migrateRepairsAcceptanceColumn(db);
   migrateRepairPartsBarcode(db);
   migrateRepairsPaymentDueAt(db);
+  migrateRepairsPaymentMethod(db);
+  migrateRepairsSumupCheckout(db);
   return db;
 }
 
@@ -46,4 +48,24 @@ function migrateRepairsPaymentDueAt(db: Database.Database): void {
        AND status IN ('fertig', 'abgeholt')
        AND payment_status = 'offen'`
   );
+}
+
+function migrateRepairsPaymentMethod(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "payment_method")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN payment_method TEXT`);
+  }
+}
+
+function migrateRepairsSumupCheckout(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "sumup_checkout_id")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN sumup_checkout_id TEXT`);
+  }
+  if (!cols.some((c) => c.name === "sumup_checkout_url")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN sumup_checkout_url TEXT`);
+  }
+  if (!cols.some((c) => c.name === "payment_paid_at")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN payment_paid_at TEXT`);
+  }
 }

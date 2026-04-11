@@ -56,3 +56,15 @@ export function buildPublicTrackingUrl(
   const base = getPublicTrackingBaseUrl(req);
   return `${base}/track/${encodeURIComponent(trackingCode)}`;
 }
+
+/**
+ * URL, die bei SumUp als `return_url` (Webhook CHECKOUT_STATUS_CHANGED) gesetzt wird.
+ * Priorität: RABBIT_SUMUP_WEBHOOK_URL → öffentliche Basis + /webhook/sumup
+ */
+export function resolveSumUpWebhookUrl(req?: Pick<Request, "get" | "protocol" | "secure">): string | undefined {
+  const custom = process.env.RABBIT_SUMUP_WEBHOOK_URL?.trim();
+  if (custom) return custom.replace(/\/$/, "");
+  const base = getPublicTrackingBaseUrl(req);
+  if (!base) return undefined;
+  return `${base.replace(/\/$/, "")}/webhook/sumup`;
+}

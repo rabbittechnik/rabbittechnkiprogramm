@@ -77,7 +77,7 @@ app.use("/uploads", express.static(UPLOAD_ROOT));
 app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
   const rows = db
     .prepare(
-      `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_due_at, r.updated_at, r.created_at,
+      `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at, r.updated_at, r.created_at,
        c.name as customer_name, d.device_type, d.brand, d.model
        FROM repairs r
        JOIN customers c ON c.id = r.customer_id
@@ -90,8 +90,25 @@ app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
 
 if (fs.existsSync(CLIENT_DIST)) {
   const indexHtml = path.join(CLIENT_DIST, "index.html");
-  app.use(express.static(CLIENT_DIST));
+  const staticMw = express.static(CLIENT_DIST);
+  /** SumUp-Webhooks & API dürfen niemals index.html vom SPA bekommen. */
+  app.use((req, res, next) => {
+    const p = req.path.split("?")[0] ?? req.path;
+    if (p.startsWith("/webhook")) {
+      next();
+      return;
+    }
+    staticMw(req, res, next);
+  });
   app.get("*", (req, res, next) => {
+    const p = req.path.split("?")[0] ?? req.path;
+    if (p.startsWith("/webhook")) {
+      res
+        .status(200)
+        .type("application/json")
+        .json({ ok: true, message: "Webhook-Endpunkt – nur POST (z. B. SumUp CHECKOUT_STATUS_CHANGED)." });
+      return;
+    }
     if (req.path.startsWith("/api")) {
       res.status(404).json({ error: "Not found" });
       return;

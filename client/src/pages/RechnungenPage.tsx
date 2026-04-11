@@ -10,6 +10,7 @@ type InvoiceRow = {
   status: string;
   total_cents: number;
   payment_status: string;
+  payment_method: string | null;
   payment_due_at: string | null;
   created_at: string;
   updated_at: string;

@@ -45,7 +45,11 @@ CREATE TABLE IF NOT EXISTS repairs (
   status TEXT NOT NULL DEFAULT 'angenommen',
   total_cents INTEGER NOT NULL DEFAULT 0,
   payment_status TEXT NOT NULL DEFAULT 'offen',
+  payment_method TEXT,
   payment_due_at TEXT,
+  sumup_checkout_id TEXT,
+  sumup_checkout_url TEXT,
+  payment_paid_at TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   acceptance_pdf_path TEXT

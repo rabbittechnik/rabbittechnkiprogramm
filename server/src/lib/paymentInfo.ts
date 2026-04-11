@@ -12,3 +12,8 @@ export const PAYMENT_TERMS_LINES_DE = [
   "Zahlungsarten: Barzahlung vor Ort · EC-/Kreditkarte am SumUp-Terminal · Überweisung auf die unten genannte IBAN.",
   `Überweisung: IBAN ${RABBIT_IBAN_FORMATTED} — bitte Tracking-Code bzw. Rechnungsnummer im Verwendungszweck angeben.`,
 ];
+
+/** Verwendungszweck für Überweisung = öffentliche Auftrags-/Tracking-Nummer */
+export function transferPurposeFromTracking(trackingCode: string): string {
+  return String(trackingCode ?? "").trim() || "—";
+}

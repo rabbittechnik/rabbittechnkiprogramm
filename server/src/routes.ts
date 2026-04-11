@@ -31,7 +31,11 @@ import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
 import { queueCustomerRepairNotification } from "./lib/repairCustomerNotify.js";
 import { uploadsDir } from "./lib/dataPaths.js";
 import { getWorkshopStatsOverview } from "./lib/workshopStats.js";
-import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE } from "./lib/paymentInfo.js";
+import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE, transferPurposeFromTracking } from "./lib/paymentInfo.js";
+import { createSumUpHostedCheckout } from "./lib/sumupCheckout.js";
+import { resolveSumUpWebhookUrl } from "./lib/publicUrl.js";
+import { syncPaymentFromSumUpCheckoutId, syncRepairPaymentFromSumUp } from "./lib/sumupPaidSync.js";
+import { appendSumupWebhookLog } from "./lib/sumupWebhookLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +68,38 @@ export function registerRoutes(app: Express, db: Database.Database) {
   ensureUploadDir();
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  /**
+   * SumUp: CHECKOUT_STATUS_CHANGED – immer Status per GET /checkouts/{id} verifizieren.
+   * Antwortet sofort mit 200 JSON (kein HTML), Verarbeitung asynchron – damit SumUp nicht in Retries läuft.
+   * @see https://developer.sumup.com/online-payments/webhooks/
+   */
+  app.post("/webhook/sumup", (req, res) => {
+    try {
+      console.log("[webhook/sumup] body:", JSON.stringify(req.body));
+      appendSumupWebhookLog(req.body);
+    } catch (e) {
+      console.error("[webhook/sumup] log", e);
+    }
+
+    res.status(200).type("application/json").json({ ok: true });
+
+    const body = req.body as { event_type?: string; id?: string };
+    const et = String(body?.event_type ?? "");
+    const checkoutId = String(body?.id ?? "").trim();
+
+    setImmediate(() => {
+      void (async () => {
+        try {
+          if (et && et !== "CHECKOUT_STATUS_CHANGED") return;
+          if (!checkoutId) return;
+          await syncPaymentFromSumUpCheckoutId(db, checkoutId);
+        } catch (e) {
+          console.error("[webhook/sumup] async", e);
+        }
+      })();
+    });
+  });
 
   /** Öffentliche Kennzahlen für die Hauptseite */
   app.get("/api/dashboard/summary", (_req, res) => {
@@ -505,16 +541,274 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(400).json({ error: "Ungültig" });
       return;
     }
-    db.prepare(`UPDATE repairs SET payment_status = ?, updated_at = datetime('now') WHERE id = ?`).run(ps, id);
+    if (ps === "bezahlt") {
+      db.prepare(
+        `UPDATE repairs SET payment_status = ?, payment_paid_at = COALESCE(payment_paid_at, datetime('now')), updated_at = datetime('now') WHERE id = ?`
+      ).run(ps, id);
+    } else {
+      db.prepare(`UPDATE repairs SET payment_status = ?, payment_paid_at = NULL, updated_at = datetime('now') WHERE id = ?`).run(ps, id);
+    }
     db.prepare(`UPDATE invoices SET payment_status = ? WHERE repair_id = ?`).run(ps, id);
     res.json({ ok: true });
+  });
+
+  /**
+   * Abholung am Tablet: Zahlungsart wählen → Status/Rechnung anpassen.
+   * SumUp: zuerst type=sumup_link (QR/URL), nach Zahlung type=sumup_complete.
+   */
+  app.post("/api/repairs/:id/pickup", requireWorkshopAuth, async (req, res) => {
+    const id = paramStr(req.params.id);
+    const type = String((req.body as { type?: string })?.type ?? "").trim();
+
+    const row = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as
+      | { id: string; status: string; total_cents: number; tracking_code: string }
+      | undefined;
+    if (!row) {
+      res.status(404).json({ error: "Auftrag nicht gefunden" });
+      return;
+    }
+
+    const regenerateInvoicePdf = async () => {
+      const inv = db.prepare(`SELECT invoice_number FROM invoices WHERE repair_id = ?`).get(id) as
+        | { invoice_number: string }
+        | undefined;
+      if (!inv) return;
+      const pdfPath = await writeInvoicePdf(db, id, inv.invoice_number);
+      db.prepare(`UPDATE invoices SET pdf_path = ?, payment_status = (SELECT payment_status FROM repairs WHERE id = ?) WHERE repair_id = ?`).run(
+        pdfPath,
+        id,
+        id
+      );
+    };
+
+    if (type === "sumup_link") {
+      if (row.status !== "fertig") {
+        res.status(400).json({ error: "SumUp nur bei Status „fertig zur Abholung“ (vor Abschluss der Abholung)." });
+        return;
+      }
+      const fullRow = db
+        .prepare(
+          `SELECT r.id, r.status, r.total_cents, r.tracking_code, r.payment_status, c.name AS customer_name
+           FROM repairs r JOIN customers c ON c.id = r.customer_id WHERE r.id = ?`
+        )
+        .get(id) as
+        | { id: string; status: string; total_cents: number; tracking_code: string; payment_status: string; customer_name: string }
+        | undefined;
+      if (!fullRow || fullRow.payment_status === "bezahlt") {
+        res.status(400).json({ error: "Auftrag bereits als bezahlt markiert oder nicht gefunden." });
+        return;
+      }
+      const apiKey = process.env.RABBIT_SUMUP_API_KEY?.trim();
+      const merchantCode = process.env.RABBIT_SUMUP_MERCHANT_CODE?.trim();
+      if (!apiKey || !merchantCode) {
+        res.status(503).json({
+          error:
+            "SumUp nicht konfiguriert: RABBIT_SUMUP_API_KEY und RABBIT_SUMUP_MERCHANT_CODE setzen (SumUp → Entwickler / Geschäftskonto).",
+        });
+        return;
+      }
+      const checkoutRef = fullRow.id.slice(0, 90);
+      const amountEuro = Math.max(0.01, fullRow.total_cents / 100);
+      const webhookUrl = resolveSumUpWebhookUrl(req);
+      try {
+        const checkout = await createSumUpHostedCheckout({
+          apiKey,
+          merchantCode,
+          amountEuro,
+          checkoutReference: checkoutRef,
+          description: `Rabbit-Technik ${fullRow.tracking_code} · ${String(fullRow.customer_name).slice(0, 120)}`,
+          returnUrl: webhookUrl,
+        });
+        db.prepare(
+          `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
+        ).run(checkout.checkoutId, checkout.hostedCheckoutUrl, id);
+        const qrDataUrl = await QRCode.toDataURL(checkout.hostedCheckoutUrl, {
+          margin: 1,
+          width: 280,
+          errorCorrectionLevel: "M",
+        });
+        res.json({
+          payment_url: checkout.hostedCheckoutUrl,
+          sumupUrl: checkout.hostedCheckoutUrl,
+          checkoutId: checkout.checkoutId,
+          checkoutReference: checkoutRef,
+          qrDataUrl,
+          hint: "Warten auf Zahlung – der Kunde scannt den QR-Code oder öffnet den Link. Sobald SumUp die Zahlung bestätigt hat, schließt sich die Abholung automatisch (alternativ „Zahlung erhalten“).",
+        });
+      } catch (e) {
+        res.status(502).json({ error: String(e) });
+      }
+      return;
+    }
+
+    if (type === "sumup_complete") {
+      const cur = db.prepare(`SELECT status, payment_status FROM repairs WHERE id = ?`).get(id) as
+        | { status: string; payment_status: string }
+        | undefined;
+      if (!cur) {
+        res.status(404).json({ error: "Auftrag nicht gefunden" });
+        return;
+      }
+      if (cur.payment_status === "bezahlt") {
+        res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id), already: true });
+        return;
+      }
+      if (cur.status !== "fertig") {
+        res.status(400).json({ error: "Abholung mit SumUp nur solange der Auftrag noch „fertig“ ist." });
+        return;
+      }
+      db.prepare(
+        `UPDATE repairs SET status = 'abgeholt', payment_status = 'bezahlt', payment_method = 'sumup', payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
+      ).run(id);
+      db.prepare(`UPDATE invoices SET payment_status = 'bezahlt' WHERE repair_id = ?`).run(id);
+      await regenerateInvoicePdf();
+      res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
+      return;
+    }
+
+    if (type === "bar") {
+      if (row.status !== "fertig") {
+        res.status(400).json({ error: "Abholung nur bei Status „fertig“." });
+        return;
+      }
+      db.prepare(
+        `UPDATE repairs SET status = 'abgeholt', payment_status = 'bezahlt', payment_method = 'bar', payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
+      ).run(id);
+      db.prepare(`UPDATE invoices SET payment_status = 'bezahlt' WHERE repair_id = ?`).run(id);
+      await regenerateInvoicePdf();
+      res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
+      return;
+    }
+
+    if (type === "ueberweisung") {
+      if (row.status !== "fertig") {
+        res.status(400).json({ error: "Abholung nur bei Status „fertig“." });
+        return;
+      }
+      db.prepare(
+        `UPDATE repairs SET status = 'abgeholt', payment_status = 'offen', payment_method = 'ueberweisung', updated_at = datetime('now') WHERE id = ?`
+      ).run(id);
+      db.prepare(`UPDATE invoices SET payment_status = 'offen' WHERE repair_id = ?`).run(id);
+      const dueRow = db.prepare(`SELECT payment_due_at FROM repairs WHERE id = ?`).get(id) as { payment_due_at: string | null } | undefined;
+      if (dueRow && !dueRow.payment_due_at) {
+        db.prepare(`UPDATE repairs SET payment_due_at = datetime('now', '+7 days') WHERE id = ?`).run(id);
+      }
+      await regenerateInvoicePdf();
+      res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
+      return;
+    }
+
+    res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_complete." });
+  });
+
+  /**
+   * SumUp-Checkout wie sumup_link (repair_id = checkout_reference), mit Prüfung von Betrag & Kundenname.
+   * Rückgabe: payment_url, checkout_id, qrDataUrl (wie Pickup).
+   * Zusätzlich: POST /create-sumup-checkout (Root-Pfad) – identische Logik für externe Clients.
+   */
+  const postCreateSumupCheckout = async (req: Request, res: Response) => {
+    const repairId = String((req.body as { repair_id?: string })?.repair_id ?? "").trim();
+    const amountEuro = Number((req.body as { amount?: unknown })?.amount);
+    const customerNameBody =
+      (req.body as { customer_name?: unknown })?.customer_name != null
+        ? String((req.body as { customer_name?: unknown }).customer_name).trim()
+        : "";
+    if (!repairId) {
+      res.status(400).json({ error: "repair_id fehlt" });
+      return;
+    }
+    const row = db
+      .prepare(
+        `SELECT r.id, r.status, r.total_cents, r.tracking_code, r.payment_status, c.name AS customer_name
+         FROM repairs r JOIN customers c ON c.id = r.customer_id WHERE r.id = ?`
+      )
+      .get(repairId) as
+      | { id: string; status: string; total_cents: number; tracking_code: string; payment_status: string; customer_name: string }
+      | undefined;
+    if (!row) {
+      res.status(404).json({ error: "Auftrag nicht gefunden" });
+      return;
+    }
+    if (row.status !== "fertig") {
+      res.status(400).json({ error: "Checkout nur bei Status „fertig zur Abholung“." });
+      return;
+    }
+    if (row.payment_status === "bezahlt") {
+      res.status(400).json({ error: "Auftrag ist bereits bezahlt." });
+      return;
+    }
+    const expected = Math.max(0.01, row.total_cents / 100);
+    if (!Number.isFinite(amountEuro) || Math.abs(amountEuro - expected) > 0.02) {
+      res.status(400).json({ error: "Betrag entspricht nicht der Auftragssumme." });
+      return;
+    }
+    if (
+      customerNameBody &&
+      customerNameBody.toLowerCase() !== String(row.customer_name).trim().toLowerCase()
+    ) {
+      res.status(400).json({ error: "Kundenname stimmt nicht mit dem Auftrag überein." });
+      return;
+    }
+    const apiKey = process.env.RABBIT_SUMUP_API_KEY?.trim();
+    const merchantCode = process.env.RABBIT_SUMUP_MERCHANT_CODE?.trim();
+    if (!apiKey || !merchantCode) {
+      res.status(503).json({
+        error:
+          "SumUp nicht konfiguriert: RABBIT_SUMUP_API_KEY und RABBIT_SUMUP_MERCHANT_CODE setzen (SumUp → Entwickler / Geschäftskonto).",
+      });
+      return;
+    }
+    const checkoutRef = row.id.slice(0, 90);
+    const webhookUrl = resolveSumUpWebhookUrl(req);
+    try {
+      const checkout = await createSumUpHostedCheckout({
+        apiKey,
+        merchantCode,
+        amountEuro: expected,
+        checkoutReference: checkoutRef,
+        description: `Rabbit-Technik ${row.tracking_code} · ${String(row.customer_name).slice(0, 120)}`,
+        returnUrl: webhookUrl,
+      });
+      db.prepare(
+        `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
+      ).run(checkout.checkoutId, checkout.hostedCheckoutUrl, repairId);
+      const qrDataUrl = await QRCode.toDataURL(checkout.hostedCheckoutUrl, {
+        margin: 1,
+        width: 280,
+        errorCorrectionLevel: "M",
+      });
+      res.json({
+        payment_url: checkout.hostedCheckoutUrl,
+        sumupUrl: checkout.hostedCheckoutUrl,
+        checkout_id: checkout.checkoutId,
+        qrDataUrl,
+        hint: "Warten auf Zahlung – nach erfolgreicher Kartenzahlung aktualisiert sich der Status automatisch.",
+      });
+    } catch (e) {
+      res.status(502).json({ error: String(e) });
+    }
+  };
+
+  app.post("/api/create-sumup-checkout", requireWorkshopAuth, postCreateSumupCheckout);
+  app.post("/create-sumup-checkout", requireWorkshopAuth, postCreateSumupCheckout);
+
+  /** Tablet: SumUp-Status per API nachziehen (Webhook-Fallback / sofortige Aktualisierung). */
+  app.get("/api/repairs/:id/sumup-sync", requireWorkshopAuth, async (req, res) => {
+    const id = paramStr(req.params.id);
+    const exists = db.prepare(`SELECT id FROM repairs WHERE id = ?`).get(id);
+    if (!exists) {
+      res.status(404).json({ error: "Auftrag nicht gefunden" });
+      return;
+    }
+    const out = await syncRepairPaymentFromSumUp(db, id);
+    res.json(out);
   });
 
   /** Rechnungen & Zahlungsübersicht (Werkstatt) */
   app.get("/api/invoices", requireWorkshopAuth, (_req, res) => {
     const invoices = db
       .prepare(
-        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_due_at,
+        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at,
                 r.created_at, r.updated_at,
                 i.invoice_number, i.created_at AS invoice_created_at,
                 c.name AS customer_name,
@@ -743,12 +1037,29 @@ export function registerRoutes(app: Express, db: Database.Database) {
     });
   });
 
-  /** Öffentliches Tracking */
-  app.get("/api/track/:code", (req, res) => {
+  /** QR-Bild für öffentliche SumUp-Zahlungsseite (ohne Workshop-Login). */
+  app.get("/api/track/:code/sumup-qr.png", async (req, res) => {
     const code = paramStr(req.params.code).trim();
     const row = db
-      .prepare(
-        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_due_at,
+      .prepare(`SELECT sumup_checkout_url FROM repairs WHERE tracking_code = ?`)
+      .get(code) as { sumup_checkout_url: string | null } | undefined;
+    if (!row?.sumup_checkout_url) {
+      res.status(404).send("Kein SumUp-Link");
+      return;
+    }
+    try {
+      const png = await QRCode.toBuffer(row.sumup_checkout_url, { type: "png", width: 280, margin: 1 });
+      res.type("png").send(png);
+    } catch {
+      res.status(500).send("QR fehlgeschlagen");
+    }
+  });
+
+  /** Öffentliches Tracking (?sumup_sync=1 = SumUp-Status per API nachziehen, Fallback zum Webhook) */
+  app.get("/api/track/:code", async (req, res) => {
+    const code = paramStr(req.params.code).trim();
+    const trackSql = `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at,
+                r.sumup_checkout_url, r.payment_paid_at,
                 r.updated_at, r.created_at,
                 r.problem_label, r.description, r.accessories,
                 c.name AS customer_name,
@@ -765,9 +1076,18 @@ export function registerRoutes(app: Express, db: Database.Database) {
          JOIN customers c ON c.id = r.customer_id
          JOIN devices d ON d.id = r.device_id
          LEFT JOIN invoices i ON i.repair_id = r.id
-         WHERE r.tracking_code = ?`
-      )
-      .get(code);
+         WHERE r.tracking_code = ?`;
+    let row = db.prepare(trackSql).get(code);
+    if (!row) {
+      res.status(404).json({ error: "Code unbekannt" });
+      return;
+    }
+    const wantSync = String(req.query.sumup_sync ?? "") === "1";
+    if (wantSync) {
+      const rid = (row as { id: string }).id;
+      await syncRepairPaymentFromSumUp(db, rid);
+      row = db.prepare(trackSql).get(code);
+    }
     if (!row) {
       res.status(404).json({ error: "Code unbekannt" });
       return;
@@ -778,7 +1098,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
       status: string;
       total_cents: number;
       payment_status: string;
+      payment_method: string | null;
       payment_due_at: string | null;
+      sumup_checkout_url: string | null;
+      payment_paid_at: string | null;
       updated_at: string;
       created_at: string;
       problem_label: string | null;
@@ -832,6 +1155,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
         headline: PAYMENT_TERMS_HEADLINE_DE,
         lines: PAYMENT_TERMS_LINES_DE,
       },
+      transfer_verwendungszweck: transferPurposeFromTracking(repair.tracking_code),
       parts,
       message,
     });

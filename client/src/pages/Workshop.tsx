@@ -10,6 +10,7 @@ type Row = {
   status: string;
   total_cents: number;
   payment_status: string;
+  payment_method?: string | null;
   payment_due_at: string | null;
   updated_at: string;
   created_at: string;
@@ -50,6 +51,15 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   const [buy, setBuy] = useState("");
   const [newPartStatus, setNewPartStatus] = useState<"bestellt" | "vor_ort">("bestellt");
   const [newPartBarcode, setNewPartBarcode] = useState("");
+  const [pickupOpen, setPickupOpen] = useState(false);
+  const [sumupStep, setSumupStep] = useState<"qr" | null>(null);
+  const [sumupData, setSumupData] = useState<{
+    sumupUrl?: string;
+    payment_url?: string;
+    qrDataUrl?: string;
+    hint: string;
+  } | null>(null);
+  const [pickupErr, setPickupErr] = useState<string | null>(null);
 
   const PART_STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "bestellt", label: "Bestellt" },
@@ -157,6 +167,97 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     setDetail(d);
   };
 
+  const reloadSelectedFromServer = async (repairId: string) => {
+    const list = await fetchWorkshop<Row[]>("/api/repairs");
+    setRows(list);
+    const next = list.find((x) => x.id === repairId);
+    if (next) setSelected(next);
+    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${repairId}`);
+    setDetail(d);
+  };
+
+  const closePickupModal = () => {
+    setPickupOpen(false);
+    setSumupStep(null);
+    setSumupData(null);
+    setPickupErr(null);
+  };
+
+  const doPickupBarOrUeberweisung = async (type: "bar" | "ueberweisung") => {
+    if (!selected) return;
+    setPickupErr(null);
+    try {
+      await fetchWorkshop(`/api/repairs/${selected.id}/pickup`, {
+        method: "POST",
+        body: JSON.stringify({ type }),
+      });
+      closePickupModal();
+      await reloadSelectedFromServer(selected.id);
+    } catch (e) {
+      setPickupErr(String(e));
+    }
+  };
+
+  const startSumupLink = async () => {
+    if (!selected) return;
+    setPickupErr(null);
+    try {
+      const r = await fetchWorkshop<{
+        sumupUrl?: string;
+        payment_url?: string;
+        qrDataUrl?: string;
+        hint: string;
+      }>(`/api/repairs/${selected.id}/pickup`, { method: "POST", body: JSON.stringify({ type: "sumup_link" }) });
+      setSumupData(r);
+      setSumupStep("qr");
+    } catch (e) {
+      setPickupErr(String(e));
+    }
+  };
+
+  /** SumUp: Webhook-Fallback – Checkout-Status per API prüfen (alle 45 s + sofort beim Öffnen des QR-Schritts). */
+  useEffect(() => {
+    if (!pickupOpen || sumupStep !== "qr" || !selected?.id) return;
+    const repairId = selected.id;
+    const syncOnce = async () => {
+      try {
+        const out = await fetchWorkshop<{ updated: boolean }>(`/api/repairs/${repairId}/sumup-sync`);
+        if (out.updated) {
+          setPickupOpen(false);
+          setSumupStep(null);
+          setSumupData(null);
+          setPickupErr(null);
+          const list = await fetchWorkshop<Row[]>("/api/repairs");
+          setRows(list);
+          const next = list.find((x) => x.id === repairId);
+          if (next) setSelected(next);
+          const d = await fetchWorkshop<typeof detail>(`/api/repairs/${repairId}`);
+          setDetail(d);
+        }
+      } catch {
+        /* z. B. SumUp nicht konfiguriert */
+      }
+    };
+    void syncOnce();
+    const t = window.setInterval(() => void syncOnce(), 45_000);
+    return () => window.clearInterval(t);
+  }, [pickupOpen, sumupStep, selected?.id]);
+
+  const completeSumupPickup = async () => {
+    if (!selected) return;
+    setPickupErr(null);
+    try {
+      await fetchWorkshop(`/api/repairs/${selected.id}/pickup`, {
+        method: "POST",
+        body: JSON.stringify({ type: "sumup_complete" }),
+      });
+      closePickupModal();
+      await reloadSelectedFromServer(selected.id);
+    } catch (e) {
+      setPickupErr(String(e));
+    }
+  };
+
   if (gate === "loading") {
     return (
       <RtShell title={pageTitle}>
@@ -234,6 +335,19 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   {(r.status === "fertig" || r.status === "abgeholt") && r.payment_status === "offen" && r.payment_due_at && (
                     <span className="text-zinc-600"> · bis {new Date(r.payment_due_at.replace(" ", "T")).toLocaleDateString("de-DE")}</span>
                   )}
+                  {r.payment_method && (r.status === "fertig" || r.status === "abgeholt") && (
+                    <span className="text-zinc-600">
+                      {" "}
+                      ·{" "}
+                      {r.payment_method === "ueberweisung"
+                        ? "Überweisung"
+                        : r.payment_method === "sumup"
+                          ? "SumUp"
+                          : r.payment_method === "bar"
+                            ? "Bar"
+                            : r.payment_method}
+                    </span>
+                  )}
                 </p>
               </button>
             ))}
@@ -273,6 +387,27 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   ))}
                 </div>
               </div>
+              {selected.status === "fertig" && (
+                <div className="rounded-xl border border-[#39ff14]/35 bg-[#39ff14]/5 p-4">
+                  <p className="text-sm font-semibold text-[#39ff14] mb-2">Gerät wird abgeholt</p>
+                  <p className="text-xs text-zinc-500 mb-3">
+                    Wählen Sie die Zahlungsart – die PDF-Rechnung wird passend erzeugt (Bar/SumUp sofort beglichen,
+                    Überweisung mit Frist und Verwendungszweck = Tracking-Code).
+                  </p>
+                  <button
+                    type="button"
+                    className="rt-btn-confirm w-full min-h-[48px] text-base"
+                    onClick={() => {
+                      setPickupErr(null);
+                      setSumupStep(null);
+                      setSumupData(null);
+                      setPickupOpen(true);
+                    }}
+                  >
+                    Kunde holt Gerät ab – Zahlungsart wählen
+                  </button>
+                </div>
+              )}
               <div>
                 <p className="text-sm font-semibold text-violet-300 mb-2">Ersatzteil hinzufügen</p>
                 <input
@@ -364,9 +499,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
               >
                 Rechnung PDF
               </a>
-              {(selected.status === "fertig" || selected.status === "abgeholt") && (
+              {selected.status === "abgeholt" && (
                 <div className="rounded-xl border border-white/10 bg-[#060b13]/80 p-3 space-y-2">
-                  <p className="text-xs text-zinc-500">Zahlungsstatus</p>
+                  <p className="text-xs text-zinc-500">Zahlungsstatus (Korrektur)</p>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -400,6 +535,110 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
           )}
         </section>
       </div>
+
+      {pickupOpen && selected && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/75"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pickup-title"
+        >
+          <div className="max-w-md w-full rt-panel rt-panel-violet p-5 space-y-4 max-h-[90vh] overflow-y-auto shadow-[0_0_40px_rgba(0,0,0,0.6)]">
+            <div className="flex justify-between items-start gap-2">
+              <h3 id="pickup-title" className="text-lg font-bold text-white pr-4">
+                Abholung &amp; Zahlung
+              </h3>
+              <button
+                type="button"
+                className="text-zinc-500 hover:text-white text-xl leading-none shrink-0"
+                onClick={closePickupModal}
+                aria-label="Schließen"
+              >
+                ×
+              </button>
+            </div>
+            {pickupErr && <p className="text-sm text-red-400">{pickupErr}</p>}
+            {sumupStep !== "qr" ? (
+              <>
+                <p className="text-sm text-zinc-400">
+                  Auftrag <span className="font-mono text-[#00d4ff]">{selected.tracking_code}</span> · Summe{" "}
+                  <span className="font-mono">{(selected.total_cents / 100).toFixed(2)} €</span>
+                </p>
+                <button
+                  type="button"
+                  className="rt-btn-confirm w-full min-h-[48px] text-base"
+                  onClick={() => void doPickupBarOrUeberweisung("bar")}
+                >
+                  Barzahlung (sofort bezahlt)
+                </button>
+                <button
+                  type="button"
+                  className="w-full min-h-[48px] rounded-xl border border-violet-400/50 text-violet-200 hover:bg-violet-500/10 text-sm font-medium"
+                  onClick={() => void doPickupBarOrUeberweisung("ueberweisung")}
+                >
+                  Überweisung (7 Tage – Gerät abholen, Zahlung folgt)
+                </button>
+                <button
+                  type="button"
+                  className="w-full min-h-[48px] rounded-xl border border-[#00d4ff]/50 text-[#7ee8ff] hover:bg-[#00d4ff]/10 text-sm font-medium"
+                  onClick={() => void startSumupLink()}
+                >
+                  EC / Kreditkarte (SumUp-Link &amp; QR)
+                </button>
+                <p className="text-[11px] text-zinc-600">
+                  SumUp: RABBIT_SUMUP_API_KEY und RABBIT_SUMUP_MERCHANT_CODE setzen; Webhook-URL{" "}
+                  <span className="font-mono text-zinc-500">…/webhook/sumup</span> (siehe RABBIT_SUMUP_WEBHOOK_URL in
+                  .env.example). Nach erfolgreicher Zahlung schließt sich der Auftrag automatisch – „Zahlung erhalten“
+                  bleibt als Fallback.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100 text-center font-medium">
+                  Warten auf Zahlung
+                </p>
+                <p className="text-xs text-zinc-400">{sumupData?.hint}</p>
+                {(sumupData?.qrDataUrl || sumupData?.payment_url || sumupData?.sumupUrl) && selected && (
+                  <img
+                    src={
+                      sumupData?.qrDataUrl ||
+                      `/api/track/${encodeURIComponent(selected.tracking_code)}/sumup-qr.png`
+                    }
+                    alt="QR-Code SumUp-Zahlung"
+                    className="mx-auto w-56 h-56 rounded-lg border border-white/10"
+                  />
+                )}
+                {(sumupData?.payment_url || sumupData?.sumupUrl) && (
+                  <div className="flex flex-col gap-2">
+                    <a
+                      href={sumupData.payment_url || sumupData.sumupUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rt-btn-confirm w-full min-h-[48px] text-center flex items-center justify-center no-underline"
+                    >
+                      Zahlungslink öffnen
+                    </a>
+                    <p className="text-[10px] text-zinc-600 text-center break-all">{sumupData.payment_url || sumupData.sumupUrl}</p>
+                  </div>
+                )}
+                <button type="button" className="rt-btn-confirm w-full min-h-[48px]" onClick={() => void completeSumupPickup()}>
+                  Zahlung erhalten – Abholung abschließen
+                </button>
+                <button
+                  type="button"
+                  className="w-full text-xs text-zinc-500 hover:text-zinc-300 py-2"
+                  onClick={() => {
+                    setSumupStep(null);
+                    setSumupData(null);
+                  }}
+                >
+                  Zurück zur Auswahl
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </RtShell>
   );
 }

@@ -4,7 +4,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type Database from "better-sqlite3";
 
 import { invoicesDir } from "./dataPaths.js";
-import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE } from "./paymentInfo.js";
+import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE, RABBIT_IBAN_FORMATTED } from "./paymentInfo.js";
 
 export async function writeInvoicePdf(
   db: Database.Database,
@@ -75,19 +75,49 @@ export async function writeInvoicePdf(
   y -= 20;
   draw(`Zahlungsstatus: ${String(repair.payment_status)}`);
   const dueUntil = repair.payment_due_until != null ? String(repair.payment_due_until) : "";
-  if (String(repair.payment_status) === "offen" && dueUntil) {
-    y -= 4;
-    draw(
-      `Fällig am: ${new Date(dueUntil.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
-      10,
-      true
-    );
-  }
-  y -= 10;
-  draw(PAYMENT_TERMS_HEADLINE_DE, 11, true);
+  const pm = String(repair.payment_method ?? "");
+  const ps = String(repair.payment_status);
+
+  y -= 6;
+  draw("Zahlung / Abwicklung", 11, true);
   y -= 2;
-  for (const line of PAYMENT_TERMS_LINES_DE) {
-    draw(line, 9);
+
+  if (pm === "bar" && ps === "bezahlt") {
+    draw("Barzahlung bei Abholung – beglichen.", 10);
+  } else if (pm === "sumup" && ps === "bezahlt") {
+    draw("EC-/Kreditkarte über SumUp bei Abholung – beglichen.", 10);
+    const ppa = repair.payment_paid_at != null ? String(repair.payment_paid_at) : "";
+    if (ppa) {
+      draw(
+        `Zahlungseingang: ${new Date(ppa.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
+        10
+      );
+    }
+  } else if (pm === "ueberweisung" && ps === "offen") {
+    draw("Zahlung per Überweisung innerhalb von 7 Tagen.", 10, true);
+    if (dueUntil) {
+      draw(
+        `Zahlbar bis: ${new Date(dueUntil.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
+        10
+      );
+    }
+    draw(`Konto (IBAN): ${RABBIT_IBAN_FORMATTED}`, 10);
+    draw(`Verwendungszweck (Auftragsnr.): ${String(repair.tracking_code)}`, 10, true);
+    draw(`Rechnungsnr.: ${invoiceNumber}`, 10);
+  } else {
+    if (ps === "offen" && dueUntil) {
+      draw(
+        `Fällig am: ${new Date(dueUntil.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
+        10,
+        true
+      );
+      y -= 4;
+    }
+    draw(PAYMENT_TERMS_HEADLINE_DE, 10, true);
+    y -= 2;
+    for (const line of PAYMENT_TERMS_LINES_DE) {
+      draw(line, 9);
+    }
   }
 
   const pdfDir = invoicesDir();

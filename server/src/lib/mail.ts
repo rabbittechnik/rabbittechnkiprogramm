@@ -203,11 +203,111 @@ Telefon: ${COMPANY.phone}
 E-Mail: ${COMPANY.email}`;
 }
 
-function htmlFooter(): string {
-  return `<p>Mit freundlichen Grüßen<br/><strong>${escapeHtml(COMPANY.name)}</strong></p>
-<p style="font-size:13px;color:#444;">${escapeHtml(COMPANY.street)}<br/>${escapeHtml(COMPANY.zipCity)}<br/>
-Telefon: ${escapeHtml(COMPANY.phone)}<br/>
-E-Mail: <a href="mailto:${escapeHtml(COMPANY.email)}">${escapeHtml(COMPANY.email)}</a></p>`;
+/** Footer-Zeile innerhalb des HTML-Layouts (dunkler Tech-Look). */
+function htmlFooterRow(): string {
+  return `<tr>
+  <td style="padding:22px 24px 26px;background:#050810;border-top:1px solid rgba(0,212,255,0.12);">
+    <p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#e2e8f0;">
+      Mit freundlichen Grüßen<br/>
+      <strong style="color:#00d4ff;">${escapeHtml(COMPANY.name)}</strong>
+    </p>
+    <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
+      ${escapeHtml(COMPANY.street)}<br/>
+      ${escapeHtml(COMPANY.zipCity)}<br/>
+      <span style="color:#64748b;">Telefon:</span>
+      <a href="tel:${escapeHtml(COMPANY.phone.replace(/\s/g, ""))}" style="color:#39ff14;text-decoration:none;">${escapeHtml(COMPANY.phone)}</a><br/>
+      <span style="color:#64748b;">E-Mail:</span>
+      <a href="mailto:${escapeHtml(COMPANY.email)}" style="color:#7ee8ff;text-decoration:underline;">${escapeHtml(COMPANY.email)}</a>
+    </p>
+  </td>
+</tr>`;
+}
+
+/**
+ * Einheitliches Kunden-E-Mail-Layout (dunkel, cyan/lime Akzente, werkstatt-typisch).
+ * Inhalt = zusammenhängende &lt;tr&gt;…&lt;/tr&gt;-Zeilen für die innere Tabelle.
+ */
+function wrapCustomerEmailHtml(innerRows: string, preheader?: string): string {
+  const pre = preheader ? escapeHtml(preheader.slice(0, 140)) : "";
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="color-scheme" content="dark"/>
+  <meta name="supported-color-schemes" content="dark"/>
+  <title>${escapeHtml(COMPANY.name)}</title>
+  <!--[if mso]><style type="text/css">table { border-collapse: collapse; }</style><![endif]-->
+</head>
+<body style="margin:0;padding:0;background:#030508;">
+  ${pre ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${pre}</div>` : ""}
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#030508;">
+    <tr>
+      <td align="center" style="padding:28px 14px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;border-radius:18px;overflow:hidden;border:1px solid rgba(0,212,255,0.28);background:#0a1220;box-shadow:0 0 48px rgba(0,212,255,0.12);">
+          <tr>
+            <td style="padding:22px 24px 18px;background:linear-gradient(135deg,rgba(0,212,255,0.14) 0%,rgba(15,23,42,0.9) 42%,#0a1220 100%);border-bottom:1px solid rgba(0,212,255,0.18);">
+              <p style="margin:0;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#7ee8ff;font-weight:700;">Werkstatt · Service</p>
+              <p style="margin:6px 0 0;font-size:22px;font-weight:800;letter-spacing:-0.02em;color:#f8fafc;line-height:1.2;">
+                ${escapeHtml(COMPANY.name)}
+              </p>
+              <p style="margin:8px 0 0;font-size:13px;color:#94a3b8;line-height:1.45;">Reparatur · Diagnose · Ersatzteile</p>
+            </td>
+          </tr>
+          ${innerRows}
+          ${htmlFooterRow()}
+        </table>
+        <p style="margin:16px 0 0;font-size:11px;color:#475569;max-width:560px;text-align:center;line-height:1.5;">
+          Diese Nachricht wurde automatisch versendet. Bitte antworten Sie bei Rückfragen direkt auf diese E-Mail oder rufen Sie uns an.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+/** Inhalt als Abschnitt mit kleinem Label (innen &lt;td&gt;). */
+function emailContentBlock(title: string, bodyHtml: string): string {
+  return `<tr>
+  <td style="padding:18px 24px 4px;">
+    <p style="margin:0 0 8px;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#a5b4fc;font-weight:700;">${escapeHtml(title)}</p>
+    <div style="font-size:14px;line-height:1.6;color:#e2e8f0;">${bodyHtml}</div>
+  </td>
+</tr>`;
+}
+
+/** Hervorgehobener Bereich für den Tracking-Link (Button + Link als Fallback). */
+function emailTrackingHero(trackingLink: string, eyebrow: string, introLine?: string): string {
+  const intro = introLine
+    ? `<p style="margin:0 0 14px;font-size:14px;line-height:1.55;color:#cbd5e1;">${introLine}</p>`
+    : "";
+  return `<tr>
+  <td style="padding:22px 24px;background:linear-gradient(160deg,rgba(0,212,255,0.14) 0%,rgba(57,255,20,0.06) 55%,rgba(10,18,32,0.95) 100%);border-top:1px solid rgba(0,212,255,0.2);border-bottom:1px solid rgba(57,255,20,0.12);">
+    <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#7ee8ff;font-weight:700;">${escapeHtml(eyebrow)}</p>
+    ${intro}
+    <table role="presentation" cellspacing="0" cellpadding="0" align="center" style="margin:0 auto 14px;">
+      <tr>
+        <td style="border-radius:12px;background:#00d4ff;box-shadow:0 0 28px rgba(0,212,255,0.45);">
+          <a href="${escapeHtml(trackingLink)}" target="_blank" rel="noopener noreferrer"
+             style="display:inline-block;padding:16px 32px;font-size:16px;font-weight:800;color:#030712;text-decoration:none;letter-spacing:0.02em;">
+            Live-Status öffnen
+          </a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0;font-size:12px;color:#64748b;text-align:center;line-height:1.5;">
+      Oder kopieren Sie diesen Link:<br/>
+      <a href="${escapeHtml(trackingLink)}" style="color:#39ff14;word-break:break-all;text-decoration:underline;">${escapeHtml(trackingLink)}</a>
+    </p>
+  </td>
+</tr>`;
+}
+
+function emailGreeting(kundenname: string): string {
+  return `<tr><td style="padding:22px 24px 6px;">
+    <p style="margin:0;font-size:15px;line-height:1.65;color:#e2e8f0;">Hallo <strong style="color:#f8fafc;">${escapeHtml(kundenname)}</strong>,</p>
+  </td></tr>`;
 }
 
 export function escapeHtml(s: string): string {
@@ -330,9 +430,12 @@ export async function sendTestProbeEmail(to: string): Promise<{ sent: boolean; r
 Wenn Sie diese Nachricht lesen, funktioniert der Versand (Resend oder SMTP).
 
 ${textFooter()}`;
-  const html = `<p>Dies ist eine <strong>Test-E-Mail</strong> vom Rabbit-Technik Server.</p>
-<p>Wenn Sie diese Nachricht lesen, funktioniert der Versand (Resend oder SMTP).</p>
-${htmlFooter()}`;
+  const inner = `${emailGreeting("Test")}
+<tr><td style="padding:6px 24px 18px;">
+  <p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#cbd5e1;">Dies ist eine <strong style="color:#00d4ff;">Test-E-Mail</strong> vom Server.</p>
+  <p style="margin:0;font-size:14px;line-height:1.6;color:#94a3b8;">Wenn Sie diese Nachricht lesen, funktioniert der Versand (Resend oder SMTP) zuverlässig.</p>
+</td></tr>`;
+  const html = wrapCustomerEmailHtml(inner, "E-Mail-Test Rabbit-Technik");
   try {
     const r = await sendSmtp({ to, subject, text, html });
     if (!r.sent) return r;
@@ -408,22 +511,44 @@ Bei Fragen stehen wir Ihnen jederzeit zur Verfügung.
 
 ${textFooter()}`;
 
-  const html = `<p>Hallo ${escapeHtml(kundenname)},</p>
-<p>vielen Dank für Ihr Vertrauen in <strong>${escapeHtml(COMPANY.name)}</strong>.</p>
-<p>Wir bestätigen hiermit die Annahme Ihres Geräts zur Reparatur.</p>
-<p><strong>Gerät:</strong><br/>${nlToBr(`${geraetetyp} – ${marke} ${modell}`)}</p>
-<p><strong>Fehlerbeschreibung:</strong><br/>${nlToBr(fehlerbeschreibung)}</p>
-<p><strong>Festgestellte Vorschäden:</strong><br/>${nlToBr(vorschaeden)}</p>
-<p><strong>Abgegebenes Zubehör:</strong><br/>${nlToBr(zubehoer)}</p>
-<p><strong>Aktueller Status:</strong> Reparatur angenommen</p>
-<p><strong>Voraussichtliche Kosten (aktuell):</strong> ${escapeHtml(preisEuro)} €</p>
-<p style="font-size:13px;color:#555;">Hinweis: Der endgültige Preis kann sich ändern, falls während der Diagnose weitere Schäden festgestellt werden.</p>
-<p><strong>Anhang:</strong> Auftragsbestätigung als PDF (inkl. Unterschrift, sofern erfasst).</p>
-<p><strong>Reparaturstatus verfolgen:</strong><br/>
-Scannen Sie den QR-Code auf Ihrem Auftrag oder nutzen Sie den Link:<br/>
-<a href="${escapeHtml(trackingLink)}">${escapeHtml(trackingLink)}</a></p>
-<p>Bei Fragen stehen wir Ihnen jederzeit zur Verfügung.</p>
-${htmlFooter()}`;
+  const inner = `${emailGreeting(kundenname)}
+<tr><td style="padding:6px 24px 14px;">
+  <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#cbd5e1;">
+    vielen Dank für Ihr Vertrauen in <strong style="color:#00d4ff;">${escapeHtml(COMPANY.name)}</strong>.
+    Wir bestätigen die <strong style="color:#f8fafc;">Annahme Ihres Geräts</strong> zur Reparatur.
+  </p>
+</td></tr>
+${emailContentBlock("Gerät", `<p style="margin:0;">${nlToBr(`${geraetetyp} – ${marke} ${modell}`)}</p>`)}
+${emailContentBlock("Fehlerbeschreibung", `<p style="margin:0;">${nlToBr(fehlerbeschreibung)}</p>`)}
+${emailContentBlock("Festgestellte Vorschäden", `<p style="margin:0;">${nlToBr(vorschaeden)}</p>`)}
+${emailContentBlock("Abgegebenes Zubehör", `<p style="margin:0;">${nlToBr(zubehoer)}</p>`)}
+<tr><td style="padding:8px 24px;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-radius:12px;border:1px solid rgba(57,255,20,0.25);background:rgba(57,255,20,0.06);">
+    <tr><td style="padding:14px 16px;">
+      <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#86efac;font-weight:700;">Aktueller Status</p>
+      <p style="margin:0;font-size:15px;font-weight:700;color:#f0fdf4;">Reparatur angenommen</p>
+    </td></tr>
+  </table>
+</td></tr>
+${emailContentBlock(
+    "Voraussichtliche Kosten (aktuell)",
+    `<p style="margin:0;"><span style="font-size:20px;font-weight:800;color:#00d4ff;">${escapeHtml(preisEuro)} €</span></p>
+     <p style="margin:10px 0 0;font-size:12px;color:#94a3b8;line-height:1.5;">Hinweis: Der endgültige Preis kann sich ändern, falls während der Diagnose weitere Schäden festgestellt werden.</p>`
+  )}
+<tr><td style="padding:12px 24px 8px;">
+  <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.55;">
+    <span style="color:#7ee8ff;font-weight:600;">Anhang:</span> Auftragsbestätigung als PDF (inkl. Unterschrift, sofern erfasst). Den QR-Code auf dem Auftrag können Sie jederzeit scannen.
+  </p>
+</td></tr>
+${emailTrackingHero(
+    trackingLink,
+    "Ihr persönlicher Auftragslink",
+    "Hier sehen Sie den Live-Status, Teile-Lieferungen und alle Updates zu Ihrer Reparatur – übersichtlich und jederzeit abrufbar."
+  )}
+<tr><td style="padding:16px 24px 22px;">
+  <p style="margin:0;font-size:14px;color:#94a3b8;">Bei Fragen erreichen Sie uns telefonisch oder per E-Mail – wir helfen gern weiter.</p>
+</td></tr>`;
+  const html = wrapCustomerEmailHtml(inner, `Reparatur angenommen – ${COMPANY.name}`);
 
   return sendSmtp({
     to: opts.to,
@@ -471,17 +596,34 @@ Vielen Dank für Ihr Vertrauen.
 
 ${textFooter()}`;
 
-  const html = `<p>Hallo ${escapeHtml(kundenname)},</p>
-<p>es gibt ein Update zu Ihrer Reparatur.</p>
-<p><strong>Gerät:</strong><br/>${nlToBr(`${geraetetyp} – ${marke} ${modell}`)}</p>
-<p><strong>Aktueller Status:</strong><br/>${nlToBr(statusAnzeige)}</p>
-<p><strong>Ersatzteile (falls vorhanden):</strong><br/>${nlToBr(teileListe)}</p>
-<p>Den aktuellen Stand und alle Ersatzteile sehen Sie unter Ihrem persönlichen Link.<br/>
-Bei Rückfragen erreichen Sie uns telefonisch oder per E-Mail.</p>
-<p><strong>Status jederzeit live verfolgen:</strong><br/>
-<a href="${escapeHtml(trackingLink)}">${escapeHtml(trackingLink)}</a></p>
-<p>Vielen Dank für Ihr Vertrauen.</p>
-${htmlFooter()}`;
+  const inner = `${emailGreeting(kundenname)}
+<tr><td style="padding:6px 24px 10px;">
+  <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#cbd5e1;">
+    es gibt ein <strong style="color:#00d4ff;">Update</strong> zu Ihrer Reparatur – Teile, Status oder Bearbeitung haben sich verändert.
+  </p>
+</td></tr>
+${emailContentBlock("Gerät", `<p style="margin:0;">${nlToBr(`${geraetetyp} – ${marke} ${modell}`)}</p>`)}
+<tr><td style="padding:8px 24px;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-radius:12px;border:1px solid rgba(0,212,255,0.35);background:rgba(0,212,255,0.08);">
+    <tr><td style="padding:14px 16px;">
+      <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#7ee8ff;font-weight:700;">Aktueller Status</p>
+      <p style="margin:0;font-size:15px;font-weight:700;color:#f8fafc;line-height:1.45;">${nlToBr(statusAnzeige)}</p>
+    </td></tr>
+  </table>
+</td></tr>
+${emailContentBlock("Ersatzteile", `<p style="margin:0;">${nlToBr(teileListe)}</p>`)}
+<tr><td style="padding:8px 24px 4px;">
+  <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.55;">Den vollständigen Stand und alle Details sehen Sie unter Ihrem persönlichen Link. Bei Rückfragen sind wir für Sie da.</p>
+</td></tr>
+${emailTrackingHero(
+    trackingLink,
+    "Live einsehen",
+    "Ein Klick genügt – aktuelle Infos zu Ihrem Auftrag, übersichtlich dargestellt."
+  )}
+<tr><td style="padding:16px 24px 22px;">
+  <p style="margin:0;font-size:14px;color:#cbd5e1;">Vielen Dank für Ihr Vertrauen in <strong style="color:#39ff14;">${escapeHtml(COMPANY.name)}</strong>.</p>
+</td></tr>`;
+  const html = wrapCustomerEmailHtml(inner, `Reparatur-Update – ${COMPANY.name}`);
 
   return sendSmtp({ to: opts.to, subject, text, html });
 }
@@ -534,24 +676,41 @@ ${COMPANY.name}
 Telefon: ${COMPANY.phone}
 E-Mail: ${COMPANY.email}`;
 
-  const html = `<p>Hallo ${escapeHtml(kundenname)},</p>
-<p><strong>gute Nachrichten – Ihre Reparatur ist abgeschlossen!</strong></p>
-<p><strong>Gerät:</strong><br/>${nlToBr(`${geraetetyp} – ${marke} ${modell}`)}</p>
-<p><strong>Durchgeführte Arbeiten:</strong><br/>${nlToBr(reparaturDetails)}</p>
-<p><strong>Endpreis:</strong> ${escapeHtml(endpreisEuro)} €</p>
-<p><strong>Abholung:</strong><br/>
-Ihr Gerät ist ab sofort zur Abholung bereit.</p>
-<p><strong>Adresse:</strong><br/>
-${escapeHtml(COMPANY.name)}<br/>
-${escapeHtml(COMPANY.street)}<br/>
-${escapeHtml(COMPANY.zipCity)}</p>
-<p style="font-size:13px;">Bitte bringen Sie nach Möglichkeit den Abholschein oder Ihren Namen zur Identifikation mit.</p>
-<p><strong>Reparaturdetails einsehen:</strong><br/>
-<a href="${escapeHtml(trackingLink)}">${escapeHtml(trackingLink)}</a></p>
-<p>Vielen Dank für Ihr Vertrauen!</p>
-<p>Mit freundlichen Grüßen<br/><strong>${escapeHtml(COMPANY.name)}</strong></p>
-<p style="font-size:13px;color:#444;">Telefon: ${escapeHtml(COMPANY.phone)}<br/>
-E-Mail: <a href="mailto:${escapeHtml(COMPANY.email)}">${escapeHtml(COMPANY.email)}</a></p>`;
+  const inner = `${emailGreeting(kundenname)}
+<tr><td style="padding:6px 24px 12px;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-radius:12px;border:1px solid rgba(57,255,20,0.4);background:linear-gradient(135deg,rgba(57,255,20,0.12) 0%,rgba(0,212,255,0.08) 100%);">
+    <tr><td style="padding:16px 18px;">
+      <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;font-weight:700;">Fertig</p>
+      <p style="margin:0;font-size:18px;font-weight:800;color:#f0fdf4;line-height:1.35;">Gute Nachrichten – Ihre Reparatur ist abgeschlossen!</p>
+    </td></tr>
+  </table>
+</td></tr>
+${emailContentBlock("Gerät", `<p style="margin:0;">${nlToBr(`${geraetetyp} – ${marke} ${modell}`)}</p>`)}
+${emailContentBlock("Durchgeführte Arbeiten", `<p style="margin:0;">${nlToBr(reparaturDetails)}</p>`)}
+<tr><td style="padding:8px 24px;">
+  <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#7ee8ff;font-weight:700;">Endpreis</p>
+  <p style="margin:0;font-size:24px;font-weight:800;color:#00d4ff;">${escapeHtml(endpreisEuro)} €</p>
+</td></tr>
+${emailContentBlock(
+    "Abholung",
+    `<p style="margin:0 0 10px;">Ihr Gerät ist <strong style="color:#f8fafc;">ab sofort zur Abholung bereit</strong>.</p>
+     <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.55;">
+       <strong style="color:#cbd5e1;">Adresse:</strong><br/>
+       ${escapeHtml(COMPANY.name)}<br/>
+       ${escapeHtml(COMPANY.street)}<br/>
+       ${escapeHtml(COMPANY.zipCity)}
+     </p>
+     <p style="margin:12px 0 0;font-size:12px;color:#64748b;">Bitte bringen Sie nach Möglichkeit den Abholschein oder Ihren Namen zur Identifikation mit.</p>`
+  )}
+${emailTrackingHero(
+    trackingLink,
+    "Details & Übersicht",
+    "Hier sehen Sie die abschließende Übersicht zu Ihrer Reparatur – jederzeit abrufbar."
+  )}
+<tr><td style="padding:16px 24px 22px;">
+  <p style="margin:0;font-size:15px;color:#e2e8f0;">Vielen Dank für Ihr Vertrauen!</p>
+</td></tr>`;
+  const html = wrapCustomerEmailHtml(inner, `Reparatur fertig – ${COMPANY.name}`);
 
   return sendSmtp({ to: opts.to, subject, text, html });
 }

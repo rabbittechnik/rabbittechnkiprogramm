@@ -80,6 +80,9 @@ export function TrackPage() {
       status: string;
       total_cents: number;
       payment_status: string;
+      payment_method?: string | null;
+      sumup_checkout_url?: string | null;
+      payment_paid_at?: string | null;
       updated_at: string;
       created_at: string;
       problem_label: string | null;
@@ -94,6 +97,7 @@ export function TrackPage() {
     payment_due_until?: string;
     payment_bucket?: string;
     paymentTerms?: { headline: string; lines: string[] };
+    transfer_verwendungszweck?: string;
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -101,10 +105,11 @@ export function TrackPage() {
     if (pathCode) setCode(pathCode);
   }, [pathCode]);
 
-  const load = async (c: string) => {
+  const load = async (c: string, sumupSync = false) => {
     setErr(null);
     try {
-      const d = await fetchJson<typeof data>(`/api/track/${encodeURIComponent(c)}`);
+      const q = sumupSync ? "?sumup_sync=1" : "";
+      const d = await fetchJson<typeof data>(`/api/track/${encodeURIComponent(c)}${q}`);
       setData(d as typeof data);
     } catch (e) {
       setErr(String(e));
@@ -115,6 +120,19 @@ export function TrackPage() {
   useEffect(() => {
     if (code) void load(code);
   }, [code]);
+
+  const sumupWarte =
+    data &&
+    data.tracking.payment_status === "offen" &&
+    Boolean(data.tracking.sumup_checkout_url) &&
+    (data.tracking.status === "fertig" || data.tracking.status === "abgeholt");
+
+  useEffect(() => {
+    if (!sumupWarte || !code) return;
+    void load(code, true);
+    const t = window.setInterval(() => void load(code, true), 50_000);
+    return () => window.clearInterval(t);
+  }, [sumupWarte, code]);
 
   const steps = [
     "angenommen",
@@ -260,6 +278,19 @@ export function TrackPage() {
                 <p className="text-zinc-500 text-xs uppercase tracking-wide">Geschätzte Summe</p>
                 <p className="font-mono text-2xl text-[#00d4ff]">{(data.tracking.total_cents / 100).toFixed(2)} €</p>
                 <p className="text-zinc-500 text-xs mt-1">Zahlung: {paymentLabelDe(data.tracking.payment_status)}</p>
+                {data.tracking.payment_status === "bezahlt" && data.tracking.payment_method === "sumup" && (
+                  <p className="text-emerald-400/95 text-sm mt-2">
+                    ✅ Bezahlt (SumUp)
+                    {data.tracking.payment_paid_at && (
+                      <span className="block text-zinc-400 text-xs font-normal mt-0.5">
+                        {new Date(data.tracking.payment_paid_at.replace(" ", "T")).toLocaleString("de-DE", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </span>
+                    )}
+                  </p>
+                )}
               </div>
               <div className="text-sm text-zinc-400 sm:text-right max-w-xs">
                 Der endgültige Preis kann sich je nach Diagnose noch leicht ändern – Sie werden vor größeren Mehrkosten
@@ -267,9 +298,36 @@ export function TrackPage() {
               </div>
             </div>
 
+            {sumupWarte && data.tracking.sumup_checkout_url && (
+              <div className="rounded-2xl border border-cyan-500/40 bg-[#0a1220]/95 p-5 space-y-4">
+                <h2 className="text-sm font-bold text-cyan-200 uppercase tracking-wider">Kartenzahlung (SumUp)</h2>
+                <p className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100 text-center font-medium">
+                  Warten auf Zahlung
+                </p>
+                <p className="text-sm text-zinc-300">
+                  Bitte den QR-Code scannen oder den Zahlungslink öffnen. Nach erfolgreicher Zahlung aktualisiert sich
+                  diese Seite automatisch (ca. innerhalb einer Minute).
+                </p>
+                <img
+                  src={`/api/track/${encodeURIComponent(data.tracking.tracking_code)}/sumup-qr.png`}
+                  alt="QR-Code zur SumUp-Zahlung"
+                  className="mx-auto w-52 h-52 rounded-lg border border-white/10"
+                />
+                <a
+                  href={data.tracking.sumup_checkout_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block w-full text-center rounded-xl bg-[#00d4ff]/20 border border-[#00d4ff]/50 text-[#7ee8ff] py-3 text-sm font-semibold hover:bg-[#00d4ff]/30"
+                >
+                  Zahlungslink öffnen
+                </a>
+              </div>
+            )}
+
             {(data.tracking.status === "fertig" || data.tracking.status === "abgeholt") &&
               data.tracking.payment_status === "offen" &&
-              data.payment_due_until && (
+              data.payment_due_until &&
+              !sumupWarte && (
                 <div className="rounded-2xl border border-amber-500/40 bg-[#0a1220]/95 p-5 space-y-3">
                   <h2 className="text-sm font-bold text-amber-200 uppercase tracking-wider">Zahlung</h2>
                   {data.invoice_number && (
@@ -293,15 +351,39 @@ export function TrackPage() {
                       </span>
                     )}
                   </p>
-                  {data.paymentTerms && (
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-xs font-semibold text-amber-100/90 mb-2">{data.paymentTerms.headline}</p>
-                      <ul className="text-xs text-zinc-400 space-y-1.5 list-disc list-inside leading-relaxed">
-                        {data.paymentTerms.lines.map((line) => (
-                          <li key={line}>{line}</li>
-                        ))}
-                      </ul>
+                  {data.tracking.payment_method === "ueberweisung" ? (
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2 text-sm text-zinc-300">
+                      <p className="text-xs font-semibold text-amber-100/90 uppercase tracking-wide">Überweisung</p>
+                      <p>
+                        <span className="text-zinc-500">Zahlbar bis:</span>{" "}
+                        <strong className="text-white font-mono">
+                          {new Date(data.payment_due_until.replace(" ", "T")).toLocaleString("de-DE", {
+                            dateStyle: "long",
+                            timeStyle: "short",
+                          })}
+                        </strong>
+                      </p>
+                      <p>
+                        <span className="text-zinc-500">Konto (IBAN):</span>{" "}
+                        <span className="font-mono text-[#39ff14]">DE52 6415 0020 0004 5430 75</span>
+                      </p>
+                      <p>
+                        <span className="text-zinc-500">Verwendungszweck (Reparaturauftrag):</span>{" "}
+                        <strong className="text-white font-mono">{data.transfer_verwendungszweck ?? data.tracking.tracking_code}</strong>
+                      </p>
+                      <p className="text-xs text-zinc-500 pt-1">Bitte geben Sie die Auftrags-/Tracking-Nummer exakt so im Verwendungszweck an.</p>
                     </div>
+                  ) : (
+                    data.paymentTerms && (
+                      <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                        <p className="text-xs font-semibold text-amber-100/90 mb-2">{data.paymentTerms.headline}</p>
+                        <ul className="text-xs text-zinc-400 space-y-1.5 list-disc list-inside leading-relaxed">
+                          {data.paymentTerms.lines.map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )
                   )}
                 </div>
               )}
