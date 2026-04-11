@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS repair_parts (
   purchase_cents INTEGER NOT NULL DEFAULT 0,
   sale_cents INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'bestellt',
+  barcode TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -113,3 +114,4 @@ CREATE INDEX IF NOT EXISTS idx_repairs_tracking ON repairs(tracking_code);
 CREATE INDEX IF NOT EXISTS idx_repairs_customer ON repairs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_customer ON devices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_repair_parts_repair ON repair_parts(repair_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_repair_parts_barcode_unique ON repair_parts(barcode) WHERE barcode IS NOT NULL;

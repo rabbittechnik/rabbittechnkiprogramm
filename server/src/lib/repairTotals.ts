@@ -18,26 +18,43 @@ export function recalculateRepairTotal(db: Database.Database, repairId: string):
   return total;
 }
 
+function partArrived(s: string): boolean {
+  return s === "angekommen" || s === "eingebaut" || s === "vor_ort";
+}
+
+function partPending(s: string): boolean {
+  return s === "bestellt" || s === "unterwegs";
+}
+
 export function syncRepairStatusForParts(db: Database.Database, repairId: string): void {
   const rows = db
     .prepare(`SELECT status FROM repair_parts WHERE repair_id = ?`)
     .all(repairId) as { status: string }[];
   if (rows.length === 0) return;
-  const allArrivedOrBuilt = rows.every((r) =>
-    r.status === "angekommen" || r.status === "eingebaut" || r.status === "vor_ort"
-  );
-  const anyPending = rows.some((r) => r.status === "bestellt" || r.status === "unterwegs");
+
+  const anyPending = rows.some((r) => partPending(r.status));
+  const someArrived = rows.some((r) => partArrived(r.status));
+  const allArrivedOrBuilt = rows.every((r) => partArrived(r.status));
+
   const cur = db.prepare(`SELECT status FROM repairs WHERE id = ?`).get(repairId) as
     | { status: string }
     | undefined;
   if (!cur) return;
-  if (anyPending && cur.status !== "wartet_auf_teile") {
-    db.prepare(`UPDATE repairs SET status = 'wartet_auf_teile', updated_at = datetime('now') WHERE id = ?`).run(
-      repairId
-    );
-  } else if (!anyPending && allArrivedOrBuilt && cur.status === "wartet_auf_teile") {
-    db.prepare(`UPDATE repairs SET status = 'in_reparatur', updated_at = datetime('now') WHERE id = ?`).run(
-      repairId
-    );
+  if (cur.status === "fertig" || cur.status === "abgeholt") return;
+
+  if (!anyPending && allArrivedOrBuilt) {
+    if (cur.status === "wartet_auf_teile" || cur.status === "teilgeliefert") {
+      db.prepare(`UPDATE repairs SET status = 'in_reparatur', updated_at = datetime('now') WHERE id = ?`).run(
+        repairId
+      );
+    }
+    return;
+  }
+
+  if (anyPending) {
+    const next = someArrived ? "teilgeliefert" : "wartet_auf_teile";
+    if (cur.status !== next) {
+      db.prepare(`UPDATE repairs SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(next, repairId);
+    }
   }
 }

@@ -5,6 +5,7 @@ import { TrackPage } from "./pages/TrackPage";
 import { Workshop } from "./pages/Workshop";
 import { KundenPage } from "./pages/KundenPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { LagerPage } from "./pages/LagerPage";
 
 export default function App() {
   return (
@@ -18,15 +19,7 @@ export default function App() {
           <Route path="/kunden" element={<KundenPage />} />
           <Route path="/track" element={<TrackPage />} />
           <Route path="/track/:code" element={<TrackPage />} />
-          <Route
-            path="/lager"
-            element={
-              <PlaceholderPage
-                title="Lager & Ersatzteile"
-                description="Hier können Sie künftig Bestände, Lieferanten und Teilebewegungen verwalten – inklusive Zuordnung zu Reparaturaufträgen."
-              />
-            }
-          />
+          <Route path="/lager" element={<LagerPage />} />
           <Route
             path="/statistik"
             element={

@@ -18,7 +18,15 @@ type Row = {
   model: string | null;
 };
 
-const STATUSES = ["angenommen", "diagnose", "wartet_auf_teile", "in_reparatur", "fertig", "abgeholt"];
+const STATUSES = [
+  "angenommen",
+  "diagnose",
+  "wartet_auf_teile",
+  "teilgeliefert",
+  "in_reparatur",
+  "fertig",
+  "abgeholt",
+];
 
 export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: string }) {
   const { gate, loginPass, setLoginPass, loginErr, tryLogin, logout } = useWorkshopGate();
@@ -27,12 +35,20 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   const [selected, setSelected] = useState<Row | null>(null);
   const [detail, setDetail] = useState<{
     repair: Record<string, unknown>;
-    parts: { id: string; name: string; status: string; sale_cents: number; purchase_cents: number }[];
+    parts: {
+      id: string;
+      name: string;
+      status: string;
+      sale_cents: number;
+      purchase_cents: number;
+      barcode?: string | null;
+    }[];
   } | null>(null);
   const [partName, setPartName] = useState("");
   const [sale, setSale] = useState("");
   const [buy, setBuy] = useState("");
   const [newPartStatus, setNewPartStatus] = useState<"bestellt" | "vor_ort">("bestellt");
+  const [newPartBarcode, setNewPartBarcode] = useState("");
 
   const PART_STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "bestellt", label: "Bestellt" },
@@ -89,12 +105,14 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
         status: newPartStatus,
         sale_cents: Math.round(parseFloat(sale.replace(",", ".")) * 100) || 0,
         purchase_cents: Math.round(parseFloat(buy.replace(",", ".")) * 100) || 0,
+        ...(newPartBarcode.trim() ? { barcode: newPartBarcode.trim() } : {}),
       }),
     });
     setPartName("");
     setSale("");
     setBuy("");
     setNewPartStatus("bestellt");
+    setNewPartBarcode("");
     const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
     setDetail(d);
     await refresh();
@@ -105,6 +123,21 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     await fetchWorkshop(`/api/repairs/${selected.id}/parts/${partId}`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
+    });
+    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
+    setDetail(d);
+    await refresh();
+  };
+
+  const savePartBarcode = async (partId: string, raw: string) => {
+    if (!selected || !detail) return;
+    const v = raw.trim();
+    const p = detail.parts.find((x) => x.id === partId);
+    if (!p) return;
+    if (v === (p.barcode ?? "").trim()) return;
+    await fetchWorkshop(`/api/repairs/${selected.id}/parts/${partId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ barcode: v || null }),
     });
     const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
     setDetail(d);
@@ -248,6 +281,17 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   <option value="bestellt">Beim Lieferanten bestellt</option>
                   <option value="vor_ort">Bereits vor Ort / aus Lager</option>
                 </select>
+                <input
+                  className="rt-input-neon mb-2 font-mono text-sm"
+                  placeholder="Barcode (optional, für Wareneingang per Scan)"
+                  value={newPartBarcode}
+                  onChange={(e) => setNewPartBarcode(e.target.value)}
+                  autoComplete="off"
+                />
+                <p className="text-[11px] text-zinc-600 mb-2">
+                  Einkaufspreis = tatsächlicher EK bis ggf. spätere Lieferanten-Anbindung; erscheint auf der Lager-Übersicht
+                  mit Status „bestellt“.
+                </p>
                 <button type="button" className="rt-btn-confirm w-full text-base" onClick={() => void addPart()}>
                   Teil erfassen & Kunde benachrichtigen
                 </button>
@@ -258,20 +302,33 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   {detail.parts.map((p) => (
                     <li
                       key={p.id}
-                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-2"
+                      className="flex flex-col gap-2 border-b border-white/10 pb-3"
                     >
-                      <span className="text-sm text-zinc-300">{p.name}</span>
-                      <select
-                        className="rt-input-neon !min-h-[40px] !py-1 max-w-[200px]"
-                        value={p.status}
-                        onChange={(e) => void updatePartStatus(p.id, e.target.value)}
-                      >
-                        {PART_STATUS_OPTIONS.map((x) => (
-                          <option key={x.value} value={x.value}>
-                            {x.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="text-sm text-zinc-300">{p.name}</span>
+                        <select
+                          className="rt-input-neon !min-h-[40px] !py-1 max-w-[200px]"
+                          value={p.status}
+                          onChange={(e) => void updatePartStatus(p.id, e.target.value)}
+                        >
+                          {PART_STATUS_OPTIONS.map((x) => (
+                            <option key={x.value} value={x.value}>
+                              {x.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                        <input
+                          key={`${p.id}-${p.barcode ?? ""}`}
+                          className="rt-input-neon !min-h-[36px] !py-1 text-xs font-mono flex-1"
+                          placeholder="Barcode (optional)"
+                          defaultValue={p.barcode ?? ""}
+                          onBlur={(e) => void savePartBarcode(p.id, e.target.value)}
+                          autoComplete="off"
+                        />
+                        <span className="text-[10px] text-zinc-600 shrink-0">Speichern: Feld verlassen</span>
+                      </div>
                     </li>
                   ))}
                 </ul>

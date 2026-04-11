@@ -7,6 +7,7 @@ const STATUS_LABEL: Record<string, string> = {
   angenommen: "Angenommen",
   diagnose: "Diagnose",
   wartet_auf_teile: "Warte auf Teile",
+  teilgeliefert: "Ersatzteil teilweise da",
   in_reparatur: "In Reparatur",
   fertig: "Fertig zur Abholung",
   abgeholt: "Abgeholt",
@@ -20,6 +21,8 @@ const STATUS_ERKLAERUNG: Record<string, string> = {
     "Wir untersuchen Ihr Gerät gerade gezielt auf die beschriebenen Probleme. Ziel ist, die technische Ursache zu finden und Ihnen im Anschluss eine belastbare Einschätzung zu geben.",
   wartet_auf_teile:
     "Für die Reparatur sind spezielle Ersatzteile notwendig. Diese sind bestellt oder bereits unterwegs. Sobald alle Teile bei uns sind, starten wir unverzüglich mit der weiteren Bearbeitung.",
+  teilgeliefert:
+    "Mindestens ein bestelltes Ersatzteil ist bereits bei uns eingetroffen; auf weitere Lieferungen wird noch gewartet. Sobald alle Teile vollständig da sind, geht die Reparatur ohne Verzögerung weiter.",
   in_reparatur:
     "Ihr Gerät befindet sich aktuell in aktiver Reparatur. Unsere Techniker arbeiten an der vereinbarten Fehlerbehebung. Bei Rückfragen erreichen Sie uns telefonisch oder per E-Mail.",
   fertig:
@@ -109,7 +112,15 @@ export function TrackPage() {
     if (code) void load(code);
   }, [code]);
 
-  const steps = ["angenommen", "diagnose", "wartet_auf_teile", "in_reparatur", "fertig", "abgeholt"];
+  const steps = [
+    "angenommen",
+    "diagnose",
+    "wartet_auf_teile",
+    "teilgeliefert",
+    "in_reparatur",
+    "fertig",
+    "abgeholt",
+  ];
 
   const activeIndex = useMemo(() => {
     if (!data) return 0;

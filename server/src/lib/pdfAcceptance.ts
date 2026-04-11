@@ -1,11 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type Database from "better-sqlite3";
 import { formatVorschaeden } from "./mail.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { acceptanceDir } from "./dataPaths.js";
 
 function parseDataUrlImage(
   dataUrl: string | null | undefined
@@ -156,8 +154,7 @@ export async function writeAcceptancePdf(db: Database.Database, repairId: string
   draw("Dieses Dokument entspricht der Annahme am Service-Terminal.", 8);
 
   const safeTracking = String(row.tracking_code).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const pdfDir = path.join(__dirname, "../../data/acceptance");
-  if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
+  const pdfDir = acceptanceDir();
   const filePath = path.join(pdfDir, `Annahme-${safeTracking}.pdf`);
   fs.writeFileSync(filePath, await pdf.save());
   return filePath;

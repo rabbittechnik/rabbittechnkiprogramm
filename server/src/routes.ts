@@ -29,13 +29,13 @@ import {
 } from "./lib/mail.js";
 import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
 import { queueCustomerRepairNotification } from "./lib/repairCustomerNotify.js";
+import { uploadsDir } from "./lib/dataPaths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const UPLOAD_DIR = path.join(__dirname, "../data/uploads");
-
 function ensureUploadDir() {
-  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  const dir = uploadsDir();
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 /** Route-Parameter als string (Express-Typ kann string | string[] sein). */
@@ -460,7 +460,15 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     const status = String(req.body?.status ?? "");
-    const allowed = ["angenommen", "diagnose", "wartet_auf_teile", "in_reparatur", "fertig", "abgeholt"];
+    const allowed = [
+      "angenommen",
+      "diagnose",
+      "wartet_auf_teile",
+      "teilgeliefert",
+      "in_reparatur",
+      "fertig",
+      "abgeholt",
+    ];
     if (!allowed.includes(status)) {
       res.status(400).json({ error: "Ungültiger Status" });
       return;
@@ -513,10 +521,20 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     const purchase_cents = Math.round(Number(req.body?.purchase_cents ?? 0));
     const sale_cents = Math.round(Number(req.body?.sale_cents ?? 0));
+    let barcode: string | null = null;
+    const rawBc = req.body?.barcode;
+    if (rawBc != null && String(rawBc).trim() !== "") {
+      barcode = String(rawBc).trim();
+      const dup = db.prepare(`SELECT id FROM repair_parts WHERE barcode = ?`).get(barcode) as { id: string } | undefined;
+      if (dup) {
+        res.status(400).json({ error: "Barcode bereits vergeben" });
+        return;
+      }
+    }
     const pid = nanoid();
     db.prepare(
-      `INSERT INTO repair_parts (id, repair_id, part_id, name, purchase_cents, sale_cents, status) VALUES (?,?,?,?,?,?,?)`
-    ).run(pid, repairId, null, name, purchase_cents, sale_cents, initialStatus);
+      `INSERT INTO repair_parts (id, repair_id, part_id, name, purchase_cents, sale_cents, status, barcode) VALUES (?,?,?,?,?,?,?,?)`
+    ).run(pid, repairId, null, name, purchase_cents, sale_cents, initialStatus, barcode);
     recalculateRepairTotal(db, repairId);
     syncRepairStatusForParts(db, repairId);
     const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(pid);
@@ -531,35 +549,151 @@ export function registerRoutes(app: Express, db: Database.Database) {
   app.patch("/api/repairs/:repairId/parts/:partId", requireWorkshopAuth, (req, res) => {
     const repairId = paramStr(req.params.repairId);
     const partId = paramStr(req.params.partId);
-    const status = String(req.body?.status ?? "");
-    const allowed = ["bestellt", "unterwegs", "angekommen", "eingebaut", "vor_ort"];
-    if (!allowed.includes(status)) {
-      res.status(400).json({ error: "Ungültiger Teile-Status" });
+    const body = req.body as { status?: unknown; barcode?: unknown };
+    const wantStatus = body.status !== undefined;
+    const wantBarcode = body.barcode !== undefined;
+    if (!wantStatus && !wantBarcode) {
+      res.status(400).json({ error: "Keine Änderung (status oder barcode angeben)" });
       return;
     }
+
     const prevRow = db
-      .prepare(`SELECT name, status FROM repair_parts WHERE id = ? AND repair_id = ?`)
-      .get(partId, repairId) as { name: string; status: string } | undefined;
+      .prepare(`SELECT name, status, barcode FROM repair_parts WHERE id = ? AND repair_id = ?`)
+      .get(partId, repairId) as { name: string; status: string; barcode: string | null } | undefined;
     if (!prevRow) {
       res.status(404).json({ error: "Teil nicht gefunden" });
       return;
     }
+
+    const allowedPart = ["bestellt", "unterwegs", "angekommen", "eingebaut", "vor_ort"];
+    let nextStatus = prevRow.status;
+    if (wantStatus) {
+      const status = String(body.status ?? "");
+      if (!allowedPart.includes(status)) {
+        res.status(400).json({ error: "Ungültiger Teile-Status" });
+        return;
+      }
+      nextStatus = status;
+    }
+
+    let nextBarcode: string | null = prevRow.barcode;
+    if (wantBarcode) {
+      const raw = body.barcode;
+      if (raw === null || raw === "") {
+        nextBarcode = null;
+      } else {
+        const b = String(raw).trim();
+        if (!b) {
+          nextBarcode = null;
+        } else {
+          const dup = db
+            .prepare(`SELECT id FROM repair_parts WHERE barcode = ? AND id != ?`)
+            .get(b, partId) as { id: string } | undefined;
+          if (dup) {
+            res.status(400).json({ error: "Barcode bereits vergeben" });
+            return;
+          }
+          nextBarcode = b;
+        }
+      }
+    }
+
     const r = db
-      .prepare(`UPDATE repair_parts SET status = ? WHERE id = ? AND repair_id = ?`)
-      .run(status, partId, repairId);
+      .prepare(`UPDATE repair_parts SET status = ?, barcode = ? WHERE id = ? AND repair_id = ?`)
+      .run(nextStatus, nextBarcode, partId, repairId);
     if (r.changes === 0) {
       res.status(404).json({ error: "Teil nicht gefunden" });
       return;
     }
     syncRepairStatusForParts(db, repairId);
     const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(partId);
-    if (prevRow.status !== status) {
-      const zusatz = `Ersatzteil „${prevRow.name}“: ${partStatusLabelDe(status)}${
+    if (wantStatus && prevRow.status !== nextStatus) {
+      const zusatz = `Ersatzteil „${prevRow.name}“: ${partStatusLabelDe(nextStatus)}${
         prevRow.status ? ` (vorher: ${partStatusLabelDe(prevRow.status)})` : ""
       }`;
       queueCustomerRepairNotification(db, repairId, zusatz);
     }
     res.json({ part });
+  });
+
+  app.get("/api/lager/parts", requireWorkshopAuth, (_req, res) => {
+    const parts = db
+      .prepare(
+        `SELECT rp.id, rp.repair_id, rp.name, rp.status, rp.sale_cents, rp.purchase_cents, rp.barcode, rp.created_at,
+                r.tracking_code, r.status AS repair_status,
+                c.name AS customer_name,
+                d.device_type, d.brand, d.model
+         FROM repair_parts rp
+         JOIN repairs r ON r.id = rp.repair_id
+         JOIN customers c ON c.id = r.customer_id
+         JOIN devices d ON d.id = r.device_id
+         WHERE rp.status IN ('bestellt', 'unterwegs', 'angekommen')
+         ORDER BY datetime(rp.created_at) DESC
+         LIMIT 500`
+      )
+      .all();
+    res.json({ parts });
+  });
+
+  app.post("/api/lager/scan-barcode", requireWorkshopAuth, (req, res) => {
+    const barcode = String(req.body?.barcode ?? "").trim();
+    if (!barcode) {
+      res.status(400).json({ error: "Barcode leer" });
+      return;
+    }
+    const prevRow = db.prepare(`SELECT * FROM repair_parts WHERE barcode = ?`).get(barcode) as
+      | {
+          id: string;
+          repair_id: string;
+          name: string;
+          status: string;
+          barcode: string | null;
+        }
+      | undefined;
+    if (!prevRow) {
+      res.status(404).json({ error: "Barcode unbekannt" });
+      return;
+    }
+    const repairId = prevRow.repair_id;
+
+    if (prevRow.status === "angekommen" || prevRow.status === "eingebaut") {
+      const repair = db.prepare(`SELECT id, tracking_code, status FROM repairs WHERE id = ?`).get(repairId);
+      res.json({
+        ok: true,
+        already: true,
+        part: db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(prevRow.id),
+        repair,
+        message:
+          prevRow.status === "eingebaut"
+            ? "Dieses Teil ist bereits eingebaut."
+            : "Dieses Teil war bereits als angekommen gebucht.",
+      });
+      return;
+    }
+
+    if (prevRow.status === "vor_ort") {
+      res.status(409).json({ error: "Teil ist als vor Ort/Lager markiert – kein Wareneingang per Scan nötig." });
+      return;
+    }
+
+    if (prevRow.status !== "bestellt" && prevRow.status !== "unterwegs") {
+      res.status(400).json({ error: `Teil hat Status „${prevRow.status}“ – Scan nicht möglich.` });
+      return;
+    }
+
+    const oldStatus = prevRow.status;
+    db.prepare(`UPDATE repair_parts SET status = 'angekommen' WHERE id = ?`).run(prevRow.id);
+    syncRepairStatusForParts(db, repairId);
+    const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(prevRow.id);
+    const repair = db.prepare(`SELECT id, tracking_code, status FROM repairs WHERE id = ?`).get(repairId);
+    const zusatz = `Ersatzteil „${prevRow.name}“ per Barcode-Scan: ${partStatusLabelDe("angekommen")} (vorher: ${partStatusLabelDe(oldStatus)})`;
+    queueCustomerRepairNotification(db, repairId, zusatz);
+    res.json({
+      ok: true,
+      part,
+      repair,
+      message: "Teil als angekommen gebucht; Auftragsstatus wurde angepasst.",
+    });
   });
 
   /** Öffentliches Tracking */
@@ -601,6 +735,17 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const parts = db
       .prepare(`SELECT name, status, sale_cents FROM repair_parts WHERE repair_id = ?`)
       .all(repairIdForParts) as { name: string; status: string; sale_cents: number }[];
+    const pendingParts = parts.some((p) => p.status === "bestellt" || p.status === "unterwegs");
+    const anyHere = parts.some(
+      (p) => p.status === "angekommen" || p.status === "eingebaut" || p.status === "vor_ort"
+    );
+    let message: string | null = null;
+    if (pendingParts && anyHere) {
+      message =
+        "Ein oder mehrere Ersatzteile sind bereits bei uns eingetroffen; weitere Teile folgen. Sobald alle Bestellungen vollständig da sind, geht die Bearbeitung nahtlos weiter.";
+    } else if (pendingParts) {
+      message = "Sobald alle bestellten Teile bei uns eingetroffen sind, geht es mit der Reparatur weiter.";
+    }
     res.json({
       tracking: trackingRest,
       customer: { name: customer_name },
@@ -610,10 +755,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
         model: model ?? null,
       },
       parts,
-      message:
-        parts.some((p) => p.status === "bestellt" || p.status === "unterwegs")
-          ? "Sobald alle bestellten Teile bei uns eingetroffen sind, geht es mit der Reparatur weiter."
-          : null,
+      message,
     });
   });
 

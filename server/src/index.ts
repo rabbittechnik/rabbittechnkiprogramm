@@ -12,6 +12,7 @@ import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
 import { isMailConfigured, isResendConfigured, smtpMissingVars } from "./lib/mail.js";
 import { getPublicTrackingBaseUrl } from "./lib/publicUrl.js";
+import { uploadsDir } from "./lib/dataPaths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,7 +22,7 @@ const envServer = path.resolve(__dirname, "../.env");
 if (fs.existsSync(envRoot)) dotenv.config({ path: envRoot });
 if (fs.existsSync(envServer)) dotenv.config({ path: envServer, override: true });
 
-const UPLOAD_ROOT = path.join(__dirname, "../data/uploads");
+const UPLOAD_ROOT = uploadsDir();
 /** Vite-Build (Production): relativ zu server/dist → ../../client/dist */
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
 

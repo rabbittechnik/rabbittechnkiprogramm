@@ -139,6 +139,7 @@ export function statusLabelDe(status: string): string {
     angenommen: "Reparatur angenommen",
     diagnose: "In Diagnose",
     wartet_auf_teile: "Warte auf Ersatzteile / Teile bestellt",
+    teilgeliefert: "Ersatzteil(e) teilweise geliefert",
     in_reparatur: "Reparatur in Bearbeitung",
     fertig: "Fertig zur Abholung",
     abgeholt: "Abgeholt",

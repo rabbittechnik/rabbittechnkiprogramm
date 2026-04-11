@@ -1,10 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type Database from "better-sqlite3";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { invoicesDir } from "./dataPaths.js";
 
 export async function writeInvoicePdf(
   db: Database.Database,
@@ -73,8 +72,7 @@ export async function writeInvoicePdf(
   y -= 20;
   draw(`Zahlungsstatus: ${String(repair.payment_status)}`);
 
-  const pdfDir = path.join(__dirname, "../../data/invoices");
-  if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
+  const pdfDir = invoicesDir();
   const filePath = path.join(pdfDir, `${invoiceNumber}.pdf`);
   fs.writeFileSync(filePath, await pdf.save());
   return filePath;
