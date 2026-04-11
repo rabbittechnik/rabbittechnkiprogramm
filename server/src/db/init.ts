@@ -17,6 +17,7 @@ export function openDatabase(): Database.Database {
   migrateRepairsPaymentDueAt(db);
   migrateRepairsPaymentMethod(db);
   migrateRepairsSumupCheckout(db);
+  migrateRepairsSumupTerminal(db);
   return db;
 }
 
@@ -68,4 +69,19 @@ function migrateRepairsSumupCheckout(db: Database.Database): void {
   if (!cols.some((c) => c.name === "payment_paid_at")) {
     db.exec(`ALTER TABLE repairs ADD COLUMN payment_paid_at TEXT`);
   }
+}
+
+/** SumUp: Online-Hosted-Checkout vs. Reader-Terminal (Karte am Gerät). */
+function migrateRepairsSumupTerminal(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "sumup_channel")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN sumup_channel TEXT`);
+  }
+  if (!cols.some((c) => c.name === "sumup_terminal_foreign_id")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN sumup_terminal_foreign_id TEXT`);
+  }
+  if (!cols.some((c) => c.name === "sumup_terminal_client_transaction_id")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN sumup_terminal_client_transaction_id TEXT`);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_repairs_sumup_terminal_foreign ON repairs(sumup_terminal_foreign_id)`);
 }

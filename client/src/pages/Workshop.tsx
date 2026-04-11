@@ -12,6 +12,7 @@ type Row = {
   total_cents: number;
   payment_status: string;
   payment_method?: string | null;
+  sumup_channel?: string | null;
   payment_due_at: string | null;
   updated_at: string;
   created_at: string;
@@ -53,8 +54,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   const [newPartStatus, setNewPartStatus] = useState<"bestellt" | "vor_ort">("bestellt");
   const [newPartBarcode, setNewPartBarcode] = useState("");
   const [pickupOpen, setPickupOpen] = useState(false);
-  const [sumupStep, setSumupStep] = useState<"qr" | null>(null);
+  const [sumupStep, setSumupStep] = useState<"qr" | "terminal" | null>(null);
   const [sumupData, setSumupData] = useState<{
+    mode?: "terminal";
     sumupUrl?: string;
     payment_url?: string;
     qrDataUrl?: string;
@@ -221,9 +223,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     }
   };
 
-  /** SumUp: Webhook-Fallback – Checkout-Status per API prüfen (alle 45 s + sofort beim Öffnen des QR-Schritts). */
+  /** SumUp: Webhook-Fallback – Online-Checkout oder Terminal-Transaktion per API prüfen (alle 45 s + sofort beim Öffnen). */
   useEffect(() => {
-    if (!pickupOpen || sumupStep !== "qr" || !selected?.id) return;
+    if (!pickupOpen || (sumupStep !== "qr" && sumupStep !== "terminal") || !selected?.id) return;
     const repairId = selected.id;
     const syncOnce = async () => {
       try {
@@ -248,6 +250,21 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     const t = window.setInterval(() => void syncOnce(), 45_000);
     return () => window.clearInterval(t);
   }, [pickupOpen, sumupStep, selected?.id]);
+
+  const startSumupTerminal = async () => {
+    if (!selected) return;
+    setPickupErr(null);
+    try {
+      const r = await fetchWorkshop<{ mode?: string; hint: string }>(`/api/repairs/${selected.id}/pickup`, {
+        method: "POST",
+        body: JSON.stringify({ type: "sumup_terminal" }),
+      });
+      setSumupData({ mode: "terminal", hint: r.hint });
+      setSumupStep("terminal");
+    } catch (e) {
+      setPickupErr(String(e));
+    }
+  };
 
   const completeSumupPickup = async () => {
     if (!selected) return;
@@ -348,7 +365,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                       {r.payment_method === "ueberweisung"
                         ? "Überweisung"
                         : r.payment_method === "sumup"
-                          ? "SumUp"
+                          ? r.sumup_channel === "terminal"
+                            ? "SumUp-Terminal"
+                            : "SumUp (Online)"
                           : r.payment_method === "bar"
                             ? "Bar"
                             : r.payment_method}
@@ -397,7 +416,8 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <div className="rounded-xl border border-[#39ff14]/35 bg-[#39ff14]/5 p-4">
                   <p className="text-sm font-semibold text-[#39ff14] mb-2">Abholung &amp; Zahlung</p>
                   <p className="text-xs text-zinc-500 mb-3">
-                    Sobald der Kunde das Gerät abholt: Zahlungsart wählen (Bar, SumUp-Karte oder Überweisung). Die
+                    Sobald der Kunde das Gerät abholt: Zahlungsart wählen (Bar, SumUp online, SumUp-Terminal oder
+                    Überweisung). Die
                     Rechnung-PDF passt sich automatisch an.
                   </p>
                   <button
@@ -571,7 +591,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
               </button>
             </div>
             {pickupErr && <p className="text-sm text-red-400">{pickupErr}</p>}
-            {sumupStep !== "qr" ? (
+            {sumupStep === null ? (
               <>
                 <p className="text-sm text-zinc-400">
                   Auftrag <span className="font-mono text-[#00d4ff]">{selected.tracking_code}</span> · Summe{" "}
@@ -596,16 +616,23 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   className="w-full min-h-[48px] rounded-xl border border-[#00d4ff]/50 text-[#7ee8ff] hover:bg-[#00d4ff]/10 text-sm font-medium"
                   onClick={() => void startSumupLink()}
                 >
-                  EC / Kreditkarte (SumUp-Link &amp; QR)
+                  EC / Kreditkarte online (SumUp-Link &amp; QR)
+                </button>
+                <button
+                  type="button"
+                  className="w-full min-h-[48px] rounded-xl border border-emerald-500/45 text-emerald-200 hover:bg-emerald-500/10 text-sm font-medium"
+                  onClick={() => void startSumupTerminal()}
+                >
+                  SumUp-Gerät / EC am Kartenterminal (Vor-Ort)
                 </button>
                 <p className="text-[11px] text-zinc-600">
-                  SumUp: RABBIT_SUMUP_API_KEY und RABBIT_SUMUP_MERCHANT_CODE setzen; Webhook-URL{" "}
-                  <span className="font-mono text-zinc-500">…/webhook/sumup</span> (siehe RABBIT_SUMUP_WEBHOOK_URL in
-                  .env.example). Nach erfolgreicher Zahlung schließt sich der Auftrag automatisch – „Zahlung erhalten“
-                  bleibt als Fallback.
+                  Online: RABBIT_SUMUP_API_KEY, RABBIT_SUMUP_MERCHANT_CODE. Terminal zusätzlich RABBIT_SUMUP_READER_ID,
+                  RABBIT_SUMUP_AFFILIATE_APP_ID, RABBIT_SUMUP_AFFILIATE_KEY. Webhook{" "}
+                  <span className="font-mono text-zinc-500">…/webhook/sumup</span> (RABBIT_SUMUP_WEBHOOK_URL). Nach
+                  erfolgreicher Zahlung schließt sich der Auftrag automatisch – „Zahlung erhalten“ bleibt als Fallback.
                 </p>
               </>
-            ) : (
+            ) : sumupStep === "qr" ? (
               <>
                 <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100 text-center font-medium">
                   Warten auf Zahlung
@@ -634,6 +661,26 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                     <p className="text-[10px] text-zinc-600 text-center break-all">{sumupData.payment_url || sumupData.sumupUrl}</p>
                   </div>
                 )}
+                <button type="button" className="rt-btn-confirm w-full min-h-[48px]" onClick={() => void completeSumupPickup()}>
+                  Zahlung erhalten – Abholung abschließen
+                </button>
+                <button
+                  type="button"
+                  className="w-full text-xs text-zinc-500 hover:text-zinc-300 py-2"
+                  onClick={() => {
+                    setSumupStep(null);
+                    setSumupData(null);
+                  }}
+                >
+                  Zurück zur Auswahl
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 text-center font-medium">
+                  SumUp-Terminal
+                </p>
+                <p className="text-xs text-zinc-300 leading-relaxed">{sumupData?.hint}</p>
                 <button type="button" className="rt-btn-confirm w-full min-h-[48px]" onClick={() => void completeSumupPickup()}>
                   Zahlung erhalten – Abholung abschließen
                 </button>

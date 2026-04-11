@@ -184,7 +184,12 @@ export async function writeInvoicePdf(
   if (pm === "bar" && ps === "bezahlt") {
     payChunk("Barzahlung bei Abholung – beglichen.", 10, { color: COL.text });
   } else if (pm === "sumup" && ps === "bezahlt") {
-    payChunk("EC-/Kreditkarte über SumUp – beglichen.", 10, { color: COL.text });
+    const ch = String(repair.sumup_channel ?? "");
+    if (ch === "terminal") {
+      payChunk("EC-/Girocard am SumUp-Kartenterminal (Vor-Ort) – beglichen.", 10, { color: COL.text });
+    } else {
+      payChunk("EC-/Kreditkarte über SumUp (Online-Zahlung) – beglichen.", 10, { color: COL.text });
+    }
     const ppa = repair.payment_paid_at != null ? String(repair.payment_paid_at) : "";
     if (ppa) {
       payChunk(`Zahlungseingang: ${formatDeBerlin(String(ppa), { dateStyle: "long", timeStyle: "short" })}`, 9, {

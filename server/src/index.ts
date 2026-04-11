@@ -12,7 +12,7 @@ import { registerRoutes, paramStr } from "./routes.js";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
 import { isMailConfigured, isResendConfigured, smtpMissingVars } from "./lib/mail.js";
 import { getPublicTrackingBaseUrl } from "./lib/publicUrl.js";
-import { uploadsDir } from "./lib/dataPaths.js";
+import { getDataRoot, getDbFilePath, uploadsDir } from "./lib/dataPaths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +37,17 @@ app.use(express.json({ limit: "12mb" }));
 const db = openDatabase();
 seedIfEmpty(db);
 ensureServices(db);
+
+const dataRoot = getDataRoot();
+const dbPath = getDbFilePath();
+console.log(`[data] RABBIT_DATA_DIR=${process.env.RABBIT_DATA_DIR ?? "(nicht gesetzt → Projekt-data, bei Railway oft flüchtig)"}`);
+console.log(`[data] effektives Datenverzeichnis: ${dataRoot}`);
+console.log(`[data] SQLite-Datei: ${dbPath}`);
+if (process.env.RAILWAY_ENVIRONMENT && !process.env.RABBIT_DATA_DIR?.trim() && !process.env.RABBIT_DB_PATH?.trim()) {
+  console.warn(
+    "[data] Railway: Ohne RABBIT_DATA_DIR oder RABBIT_DB_PATH auf ein Volume zeigt die DB ins Image – Deploy kann Daten leeren. Volume z. B. /data mounten und RABBIT_DATA_DIR=/data setzen."
+  );
+}
 registerRoutes(app, db);
 
 const storage = multer.diskStorage({
@@ -77,7 +88,7 @@ app.use("/uploads", express.static(UPLOAD_ROOT));
 app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
   const rows = db
     .prepare(
-      `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at, r.updated_at, r.created_at,
+      `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
        c.name as customer_name, d.device_type, d.brand, d.model
        FROM repairs r
        JOIN customers c ON c.id = r.customer_id

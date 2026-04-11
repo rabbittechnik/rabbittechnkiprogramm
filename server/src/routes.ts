@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Express, Request, Response } from "express";
@@ -33,8 +34,9 @@ import { uploadsDir } from "./lib/dataPaths.js";
 import { getWorkshopStatsOverview } from "./lib/workshopStats.js";
 import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE, transferPurposeFromTracking } from "./lib/paymentInfo.js";
 import { createSumUpHostedCheckout } from "./lib/sumupCheckout.js";
+import { createSumUpReaderCheckout } from "./lib/sumupReaderCheckout.js";
 import { resolveSumUpWebhookUrl } from "./lib/publicUrl.js";
-import { syncPaymentFromSumUpCheckoutId, syncRepairPaymentFromSumUp } from "./lib/sumupPaidSync.js";
+import { processSumUpWebhookPayload, syncRepairPaymentFromSumUp } from "./lib/sumupPaidSync.js";
 import { appendSumupWebhookLog } from "./lib/sumupWebhookLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -70,8 +72,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
   /**
-   * SumUp: CHECKOUT_STATUS_CHANGED – immer Status per GET /checkouts/{id} verifizieren.
-   * Antwortet sofort mit 200 JSON (kein HTML), Verarbeitung asynchron – damit SumUp nicht in Retries läuft.
+   * SumUp: Online-Checkout (CHECKOUT_STATUS_CHANGED → GET /checkouts/{id}) und Reader-Terminal
+   * (return_url-Callback → Transaktion per GET …/transactions?foreign_transaction_id=… verifizieren).
+   * Antwortet sofort mit 200 JSON, Verarbeitung asynchron.
    * @see https://developer.sumup.com/online-payments/webhooks/
    */
   app.post("/webhook/sumup", (req, res) => {
@@ -84,16 +87,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
     res.status(200).type("application/json").json({ ok: true });
 
-    const body = req.body as { event_type?: string; id?: string };
-    const et = String(body?.event_type ?? "");
-    const checkoutId = String(body?.id ?? "").trim();
-
     setImmediate(() => {
       void (async () => {
         try {
-          if (et && et !== "CHECKOUT_STATUS_CHANGED") return;
-          if (!checkoutId) return;
-          await syncPaymentFromSumUpCheckoutId(db, checkoutId);
+          await processSumUpWebhookPayload(db, req.body);
         } catch (e) {
           console.error("[webhook/sumup] async", e);
         }
@@ -554,7 +551,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
   /**
    * Abholung am Tablet: Zahlungsart wählen → Status/Rechnung anpassen.
-   * SumUp: zuerst type=sumup_link (QR/URL), nach Zahlung type=sumup_complete.
+   * SumUp Online: type=sumup_link (QR/URL). SumUp Terminal: type=sumup_terminal (Reader-Checkout).
+   * Nach Zahlung (automatisch oder manuell): type=sumup_complete.
    */
   app.post("/api/repairs/:id/pickup", requireWorkshopAuth, async (req, res) => {
     const id = paramStr(req.params.id);
@@ -620,7 +618,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
           returnUrl: webhookUrl,
         });
         db.prepare(
-          `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
+          `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, sumup_channel = 'online',
+             sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
+             payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
         ).run(checkout.checkoutId, checkout.hostedCheckoutUrl, id);
         const qrDataUrl = await QRCode.toDataURL(checkout.hostedCheckoutUrl, {
           margin: 1,
@@ -634,6 +634,86 @@ export function registerRoutes(app: Express, db: Database.Database) {
           checkoutReference: checkoutRef,
           qrDataUrl,
           hint: "Warten auf Zahlung – der Kunde scannt den QR-Code oder öffnet den Link. Sobald SumUp die Zahlung bestätigt hat, schließt sich die Abholung automatisch (alternativ „Zahlung erhalten“).",
+        });
+      } catch (e) {
+        res.status(502).json({ error: String(e) });
+      }
+      return;
+    }
+
+    if (type === "sumup_terminal") {
+      if (row.status !== "fertig") {
+        res.status(400).json({ error: "SumUp-Terminal nur bei Status „fertig zur Abholung“ (vor Abschluss der Abholung)." });
+        return;
+      }
+      const fullRow = db
+        .prepare(
+          `SELECT r.id, r.status, r.total_cents, r.tracking_code, r.payment_status, c.name AS customer_name
+           FROM repairs r JOIN customers c ON c.id = r.customer_id WHERE r.id = ?`
+        )
+        .get(id) as
+        | { id: string; status: string; total_cents: number; tracking_code: string; payment_status: string; customer_name: string }
+        | undefined;
+      if (!fullRow || fullRow.payment_status === "bezahlt") {
+        res.status(400).json({ error: "Auftrag bereits als bezahlt markiert oder nicht gefunden." });
+        return;
+      }
+      const apiKey = process.env.RABBIT_SUMUP_API_KEY?.trim();
+      const merchantCode = process.env.RABBIT_SUMUP_MERCHANT_CODE?.trim();
+      const readerId =
+        String((req.body as { reader_id?: string })?.reader_id ?? "").trim() ||
+        process.env.RABBIT_SUMUP_READER_ID?.trim() ||
+        "";
+      const affiliateAppId = process.env.RABBIT_SUMUP_AFFILIATE_APP_ID?.trim();
+      const affiliateKey = process.env.RABBIT_SUMUP_AFFILIATE_KEY?.trim();
+      if (!apiKey || !merchantCode) {
+        res.status(503).json({
+          error:
+            "SumUp nicht konfiguriert: RABBIT_SUMUP_API_KEY und RABBIT_SUMUP_MERCHANT_CODE setzen (SumUp → Entwickler / Geschäftskonto).",
+        });
+        return;
+      }
+      if (!readerId) {
+        res.status(503).json({
+          error:
+            "SumUp-Reader fehlt: RABBIT_SUMUP_READER_ID setzen (Reader-ID aus SumUp API GET …/readers, z. B. rdr_…) oder reader_id im Request-Body.",
+        });
+        return;
+      }
+      if (!affiliateAppId || !affiliateKey) {
+        res.status(503).json({
+          error:
+            "SumUp-Terminal (Card-Present): RABBIT_SUMUP_AFFILIATE_APP_ID und RABBIT_SUMUP_AFFILIATE_KEY setzen (SumUp → Einstellungen → Für Entwickler → Affiliate Keys).",
+        });
+        return;
+      }
+      const foreignTxId = randomUUID();
+      const webhookUrl = resolveSumUpWebhookUrl(req);
+      const totalCents = Math.max(1, Math.round(fullRow.total_cents));
+      try {
+        const readerOut = await createSumUpReaderCheckout({
+          apiKey,
+          merchantCode,
+          readerId,
+          totalCents,
+          foreignTransactionId: foreignTxId,
+          affiliateAppId,
+          affiliateKey,
+          returnUrl: webhookUrl,
+          description: `Rabbit-Technik ${fullRow.tracking_code} · ${String(fullRow.customer_name).slice(0, 120)}`,
+        });
+        db.prepare(
+          `UPDATE repairs SET
+             sumup_checkout_id = NULL, sumup_checkout_url = NULL, sumup_channel = 'terminal',
+             sumup_terminal_foreign_id = ?, sumup_terminal_client_transaction_id = ?,
+             payment_method = 'sumup', updated_at = datetime('now')
+           WHERE id = ?`
+        ).run(foreignTxId, readerOut.client_transaction_id, id);
+        res.json({
+          mode: "terminal",
+          hint: "Betrag wurde an das SumUp-Gerät gesendet. Bitte Karte am Reader mit Chip oder kontaktlos zahlen (ca. 60 s Zeitfenster). Nach erfolgreicher Zahlung wird der Auftrag automatisch als bezahlt markiert (Webhook + Abgleich). „Zahlung erhalten“ bleibt als Fallback.",
+          foreign_transaction_id: foreignTxId,
+          client_transaction_id: readerOut.client_transaction_id,
         });
       } catch (e) {
         res.status(502).json({ error: String(e) });
@@ -698,7 +778,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
 
-    res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_complete." });
+    res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_terminal, sumup_complete." });
   });
 
   /**
@@ -770,7 +850,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
         returnUrl: webhookUrl,
       });
       db.prepare(
-        `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
+        `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, sumup_channel = 'online',
+           sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
+           payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
       ).run(checkout.checkoutId, checkout.hostedCheckoutUrl, repairId);
       const qrDataUrl = await QRCode.toDataURL(checkout.hostedCheckoutUrl, {
         margin: 1,
@@ -1059,7 +1141,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   app.get("/api/track/:code", async (req, res) => {
     const code = paramStr(req.params.code).trim();
     const trackSql = `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at,
-                r.sumup_checkout_url, r.payment_paid_at,
+                r.sumup_checkout_url, r.sumup_channel, r.payment_paid_at,
                 r.updated_at, r.created_at,
                 r.problem_label, r.description, r.accessories,
                 c.name AS customer_name,
@@ -1101,6 +1183,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       payment_method: string | null;
       payment_due_at: string | null;
       sumup_checkout_url: string | null;
+      sumup_channel: string | null;
       payment_paid_at: string | null;
       updated_at: string;
       created_at: string;

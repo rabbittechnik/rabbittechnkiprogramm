@@ -82,6 +82,7 @@ export function TrackPage() {
       total_cents: number;
       payment_status: string;
       payment_method?: string | null;
+      sumup_channel?: string | null;
       sumup_checkout_url?: string | null;
       payment_paid_at?: string | null;
       updated_at: string;
@@ -126,6 +127,13 @@ export function TrackPage() {
     data &&
     data.tracking.payment_status === "offen" &&
     Boolean(data.tracking.sumup_checkout_url) &&
+    data.tracking.sumup_channel !== "terminal" &&
+    (data.tracking.status === "fertig" || data.tracking.status === "abgeholt");
+
+  const sumupTerminalWarte =
+    data &&
+    data.tracking.payment_status === "offen" &&
+    data.tracking.sumup_channel === "terminal" &&
     (data.tracking.status === "fertig" || data.tracking.status === "abgeholt");
 
   useEffect(() => {
@@ -134,6 +142,13 @@ export function TrackPage() {
     const t = window.setInterval(() => void load(code, true), 50_000);
     return () => window.clearInterval(t);
   }, [sumupWarte, code]);
+
+  useEffect(() => {
+    if (!sumupTerminalWarte || !code) return;
+    void load(code, true);
+    const t = window.setInterval(() => void load(code, true), 45_000);
+    return () => window.clearInterval(t);
+  }, [sumupTerminalWarte, code]);
 
   const steps = [
     "angenommen",
@@ -281,7 +296,8 @@ export function TrackPage() {
                 <p className="text-zinc-500 text-xs mt-1">Zahlung: {paymentLabelDe(data.tracking.payment_status)}</p>
                 {data.tracking.payment_status === "bezahlt" && data.tracking.payment_method === "sumup" && (
                   <p className="text-emerald-400/95 text-sm mt-2">
-                    ✅ Bezahlt (SumUp)
+                    ✅ Bezahlt (
+                    {data.tracking.sumup_channel === "terminal" ? "SumUp am Kartenterminal" : "SumUp Online"})
                     {data.tracking.payment_paid_at && (
                       <span className="block text-zinc-400 text-xs font-normal mt-0.5">
                         {formatDeBerlin(data.tracking.payment_paid_at, { dateStyle: "medium", timeStyle: "short" })}
@@ -296,9 +312,23 @@ export function TrackPage() {
               </div>
             </div>
 
+            {sumupTerminalWarte && (
+              <div className="rounded-2xl border border-emerald-500/40 bg-[#0a1220]/95 p-5 space-y-4">
+                <h2 className="text-sm font-bold text-emerald-200 uppercase tracking-wider">Zahlung am SumUp-Terminal</h2>
+                <p className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100 text-center font-medium">
+                  Warten auf Kartenzahlung am Gerät
+                </p>
+                <p className="text-sm text-zinc-300">
+                  Die Werkstatt hat die Zahlung an das SumUp-Kartenterminal gesendet. Bitte mit EC-/Girocard oder
+                  Kreditkarte am Reader zahlen (Chip oder kontaktlos). Diese Seite aktualisiert sich automatisch, sobald
+                  die Zahlung verbucht ist.
+                </p>
+              </div>
+            )}
+
             {sumupWarte && data.tracking.sumup_checkout_url && (
               <div className="rounded-2xl border border-cyan-500/40 bg-[#0a1220]/95 p-5 space-y-4">
-                <h2 className="text-sm font-bold text-cyan-200 uppercase tracking-wider">Kartenzahlung (SumUp)</h2>
+                <h2 className="text-sm font-bold text-cyan-200 uppercase tracking-wider">Kartenzahlung online (SumUp)</h2>
                 <p className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100 text-center font-medium">
                   Warten auf Zahlung
                 </p>
@@ -324,7 +354,8 @@ export function TrackPage() {
 
             {(data.tracking.status === "fertig" || data.tracking.status === "abgeholt") &&
               data.tracking.payment_status === "offen" &&
-              !sumupWarte && (
+              !sumupWarte &&
+              !sumupTerminalWarte && (
                 <div className="rounded-2xl border border-amber-500/40 bg-[#0a1220]/95 p-5 space-y-3">
                   <h2 className="text-sm font-bold text-amber-200 uppercase tracking-wider">Zahlung</h2>
                   {data.invoice_number && (
