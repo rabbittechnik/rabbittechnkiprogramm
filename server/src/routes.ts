@@ -30,6 +30,7 @@ import {
 import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
 import { queueCustomerRepairNotification } from "./lib/repairCustomerNotify.js";
 import { uploadsDir } from "./lib/dataPaths.js";
+import { getWorkshopStatsOverview } from "./lib/workshopStats.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -91,6 +92,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
       recent,
       lastTrackingCode: last?.tracking_code ?? null,
     });
+  });
+
+  app.get("/api/stats/overview", requireWorkshopAuth, (_req, res) => {
+    res.json(getWorkshopStatsOverview(db));
   });
 
   app.get("/api/customers", requireWorkshopAuth, (_req, res) => {

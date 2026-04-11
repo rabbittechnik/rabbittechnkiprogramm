@@ -6,6 +6,7 @@ import { Workshop } from "./pages/Workshop";
 import { KundenPage } from "./pages/KundenPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { LagerPage } from "./pages/LagerPage";
+import { StatistikPage } from "./pages/StatistikPage";
 
 export default function App() {
   return (
@@ -20,15 +21,7 @@ export default function App() {
           <Route path="/track" element={<TrackPage />} />
           <Route path="/track/:code" element={<TrackPage />} />
           <Route path="/lager" element={<LagerPage />} />
-          <Route
-            path="/statistik"
-            element={
-              <PlaceholderPage
-                title="Statistik & Auswertung"
-                description="Auswertungen zu Umsatz, Bearbeitungszeiten und häufigsten Reparaturgründen werden hier vorbereitet."
-              />
-            }
-          />
+          <Route path="/statistik" element={<StatistikPage />} />
           <Route
             path="/einstellungen"
             element={
