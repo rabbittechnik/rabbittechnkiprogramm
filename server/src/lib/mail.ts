@@ -1,4 +1,5 @@
 import dns from "node:dns";
+import fs from "node:fs";
 import nodemailer from "nodemailer";
 import type { TransportOptions } from "nodemailer";
 import { buildPublicTrackingUrl } from "./publicUrl.js";
@@ -233,22 +234,37 @@ function resolveResendFrom(): string {
   return "Rabbit-Technik <onboarding@resend.dev>";
 }
 
-async function sendViaResend(opts: { to: string; subject: string; text: string; html: string }): Promise<{ sent: boolean; reason?: string }> {
+export type MailFileAttachment = { filename: string; path: string };
+
+async function sendViaResend(opts: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: MailFileAttachment[];
+}): Promise<{ sent: boolean; reason?: string }> {
   const apiKey = process.env.RABBIT_RESEND_API_KEY!.trim();
   const from = resolveResendFrom();
+  const body: Record<string, unknown> = {
+    from,
+    to: [opts.to],
+    subject: opts.subject,
+    html: opts.html,
+    text: opts.text,
+  };
+  if (opts.attachments?.length) {
+    body.attachments = opts.attachments.map((a) => ({
+      filename: a.filename,
+      content: fs.readFileSync(a.path).toString("base64"),
+    }));
+  }
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      from,
-      to: [opts.to],
-      subject: opts.subject,
-      html: opts.html,
-      text: opts.text,
-    }),
+    body: JSON.stringify(body),
   });
   const body = (await r.json().catch(() => ({}))) as { message?: string };
   if (!r.ok) {
@@ -257,7 +273,13 @@ async function sendViaResend(opts: { to: string; subject: string; text: string; 
   return { sent: true };
 }
 
-async function sendSmtp(opts: { to: string; subject: string; text: string; html: string }): Promise<{ sent: boolean; reason?: string }> {
+async function sendSmtp(opts: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: MailFileAttachment[];
+}): Promise<{ sent: boolean; reason?: string }> {
   if (isResendConfigured()) {
     try {
       return await sendViaResend(opts);
@@ -283,6 +305,11 @@ async function sendSmtp(opts: { to: string; subject: string; text: string; html:
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
+      attachments: opts.attachments?.map((a) => ({
+        filename: a.filename,
+        path: a.path,
+        contentType: "application/pdf",
+      })),
     });
     return { sent: true };
   } catch (e) {
@@ -326,6 +353,8 @@ export async function sendRepairAcceptedEmail(opts: {
   zubehoer: string;
   preisEuro: string;
   trackingLink: string;
+  /** PDF-Auftragsbestätigung mit Unterschrift (optional) */
+  attachments?: MailFileAttachment[];
 }): Promise<{ sent: boolean; reason?: string }> {
   const {
     kundenname,
@@ -367,6 +396,8 @@ ${preisEuro} €
 
 Hinweis: Der endgültige Preis kann sich ändern, falls während der Diagnose weitere Schäden festgestellt werden.
 
+Im Anhang finden Sie Ihre Auftragsbestätigung als PDF (inkl. Unterschrift, sofern erfasst).
+
 Reparaturstatus verfolgen:
 Scannen Sie einfach den QR-Code oder klicken Sie auf den folgenden Link:
 
@@ -386,13 +417,20 @@ ${textFooter()}`;
 <p><strong>Aktueller Status:</strong> Reparatur angenommen</p>
 <p><strong>Voraussichtliche Kosten (aktuell):</strong> ${escapeHtml(preisEuro)} €</p>
 <p style="font-size:13px;color:#555;">Hinweis: Der endgültige Preis kann sich ändern, falls während der Diagnose weitere Schäden festgestellt werden.</p>
+<p><strong>Anhang:</strong> Auftragsbestätigung als PDF (inkl. Unterschrift, sofern erfasst).</p>
 <p><strong>Reparaturstatus verfolgen:</strong><br/>
 Scannen Sie den QR-Code auf Ihrem Auftrag oder nutzen Sie den Link:<br/>
 <a href="${escapeHtml(trackingLink)}">${escapeHtml(trackingLink)}</a></p>
 <p>Bei Fragen stehen wir Ihnen jederzeit zur Verfügung.</p>
 ${htmlFooter()}`;
 
-  return sendSmtp({ to: opts.to, subject, text, html });
+  return sendSmtp({
+    to: opts.to,
+    subject,
+    text,
+    html,
+    attachments: opts.attachments,
+  });
 }
 
 /** 2. Statusupdate (Teile / Bearbeitung) */

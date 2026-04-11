@@ -19,5 +19,13 @@ export function openDatabase(): Database.Database {
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(SCHEMA_SQL);
+  migrateRepairsAcceptanceColumn(db);
   return db;
+}
+
+function migrateRepairsAcceptanceColumn(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "acceptance_pdf_path")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN acceptance_pdf_path TEXT`);
+  }
 }

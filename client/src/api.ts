@@ -33,6 +33,25 @@ export async function fetchWorkshop<T>(path: string, init?: RequestInit): Promis
   return r.json() as Promise<T>;
 }
 
+/** Werkstatt: Binär (z. B. PDF) mit Bearer-Token */
+export async function fetchWorkshopBlob(path: string): Promise<Blob> {
+  const h = new Headers();
+  const t = getWorkshopToken();
+  if (t) h.set("Authorization", `Bearer ${t}`);
+
+  const r = await fetch(`${API}${path}`, { headers: h });
+  if (r.status === 401) {
+    const err = new Error("Anmeldung erforderlich") as Error & { code?: string };
+    err.code = "WORKSHOP_AUTH";
+    throw err;
+  }
+  if (!r.ok) {
+    const msg = await r.text().catch(() => "");
+    throw new Error(msg.trim() || r.statusText);
+  }
+  return r.blob();
+}
+
 export async function fetchAuthStatus(): Promise<{ workshopAuthRequired: boolean }> {
   return fetchJson("/api/auth/status");
 }

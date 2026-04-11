@@ -9,6 +9,7 @@ import { PROBLEMS } from "./seed.js";
 import { getServiceRowsByCodes, getSuggestedServiceCodes, sumServiceCents } from "./lib/pricing.js";
 import { recalculateRepairTotal, syncRepairStatusForParts } from "./lib/repairTotals.js";
 import { writeInvoicePdf } from "./lib/pdfInvoice.js";
+import { writeAcceptancePdf } from "./lib/pdfAcceptance.js";
 import { makeTrackingCode } from "./lib/trackingCode.js";
 import { resolveDeviceImage } from "./lib/deviceImage.js";
 import {
@@ -115,6 +116,26 @@ export function registerRoutes(app: Express, db: Database.Database) {
     );
     const row = db.prepare(`SELECT * FROM customers WHERE id = ?`).get(id);
     res.status(201).json({ customer: row });
+  });
+
+  /** Reparatur-Historie pro Kunde (Werkstatt) – inkl. Link zur gespeicherten Annahme-PDF */
+  app.get("/api/customers/:id/repairs", requireWorkshopAuth, (req, res) => {
+    const cid = paramStr(req.params.id);
+    const exists = db.prepare(`SELECT id FROM customers WHERE id = ?`).get(cid);
+    if (!exists) {
+      res.status(404).json({ error: "Kunde nicht gefunden" });
+      return;
+    }
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.created_at, r.acceptance_pdf_path
+         FROM repairs r
+         WHERE r.customer_id = ?
+         ORDER BY datetime(r.created_at) DESC
+         LIMIT 200`
+      )
+      .all(cid);
+    res.json(rows);
   });
 
   app.get("/api/auth/status", (_req, res) => {
@@ -343,6 +364,14 @@ export function registerRoutes(app: Express, db: Database.Database) {
       const pdfPath = await writeInvoicePdf(db, rid, invRow.invoice_number);
       db.prepare(`UPDATE invoices SET pdf_path = ? WHERE repair_id = ?`).run(pdfPath, rid);
 
+      let acceptancePdfPath: string | null = null;
+      try {
+        acceptancePdfPath = await writeAcceptancePdf(db, rid);
+        db.prepare(`UPDATE repairs SET acceptance_pdf_path = ? WHERE id = ?`).run(acceptancePdfPath, rid);
+      } catch (pdfErr) {
+        console.error("[pdf] Auftragsbestätigung fehlgeschlagen:", pdfErr);
+      }
+
       const row = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(rid);
       const confirmationEmailSkipped = !customerForMail.email;
       res.status(201).json({ repair: row, tracking_code: tracking, confirmationEmailSkipped });
@@ -364,6 +393,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
           (repairRow.description && repairRow.description.trim()) ||
           (repairRow.problem_label && repairRow.problem_label.trim()) ||
           "—";
+        const annPdf = acceptancePdfPath && fs.existsSync(acceptancePdfPath) ? acceptancePdfPath : null;
+        const safeFile = `Auftragsbestaetigung-${tracking.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`;
         logMailOutcome(
           "Annahme-Bestätigung",
           tracking,
@@ -379,6 +410,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
             zubehoer: repairRow.accessories?.trim() || "—",
             preisEuro: formatEuroFromCents(repairRow.total_cents),
             trackingLink: publicTrackingUrl(tracking),
+            attachments: annPdf ? [{ filename: safeFile, path: annPdf }] : undefined,
           })
         );
       } else {
@@ -602,6 +634,19 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     res.sendFile(path.resolve(inv.pdf_path));
+  });
+
+  /** Gespeicherte Auftragsbestätigung (PDF mit Unterschrift) – nur Werkstatt */
+  app.get("/api/repairs/:id/acceptance.pdf", requireWorkshopAuth, (req, res) => {
+    const id = paramStr(req.params.id);
+    const row = db.prepare(`SELECT acceptance_pdf_path FROM repairs WHERE id = ?`).get(id) as
+      | { acceptance_pdf_path: string | null }
+      | undefined;
+    if (!row?.acceptance_pdf_path || !fs.existsSync(row.acceptance_pdf_path)) {
+      res.status(404).send("Keine Auftragsbestätigung");
+      return;
+    }
+    res.type("pdf").sendFile(path.resolve(row.acceptance_pdf_path));
   });
 
   app.get("/api/repairs/:id/qr.png", async (req, res) => {

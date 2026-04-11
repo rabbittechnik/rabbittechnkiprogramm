@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS repairs (
   total_cents INTEGER NOT NULL DEFAULT 0,
   payment_status TEXT NOT NULL DEFAULT 'offen',
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  acceptance_pdf_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS repair_services (

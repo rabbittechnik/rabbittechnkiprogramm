@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { RtShell } from "../components/RtShell";
-import { fetchWorkshop } from "../api";
+import { fetchWorkshop, fetchWorkshopBlob } from "../api";
 import { useWorkshopGate } from "../useWorkshopGate";
 
 type Customer = {
@@ -10,6 +10,15 @@ type Customer = {
   phone: string | null;
   address: string | null;
   created_at: string;
+};
+
+type RepairHistoryRow = {
+  id: string;
+  tracking_code: string;
+  status: string;
+  total_cents: number;
+  created_at: string;
+  acceptance_pdf_path: string | null;
 };
 
 export function KundenPage() {
@@ -23,6 +32,9 @@ export function KundenPage() {
   const [testMailTo, setTestMailTo] = useState("");
   const [testMailBusy, setTestMailBusy] = useState(false);
   const [testMailMsg, setTestMailMsg] = useState<string | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [repairHistory, setRepairHistory] = useState<RepairHistoryRow[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const load = async () => {
     try {
@@ -36,6 +48,28 @@ export function KundenPage() {
   useEffect(() => {
     if (gate === "ok") void load();
   }, [gate]);
+
+  useEffect(() => {
+    if (!selectedCustomer) {
+      setRepairHistory(null);
+      return;
+    }
+    setHistoryLoading(true);
+    fetchWorkshop<RepairHistoryRow[]>(`/api/customers/${encodeURIComponent(selectedCustomer.id)}/repairs`)
+      .then(setRepairHistory)
+      .catch(() => setRepairHistory([]))
+      .finally(() => setHistoryLoading(false));
+  }, [selectedCustomer]);
+
+  const openAcceptancePdf = (repairId: string) => {
+    void fetchWorkshopBlob(`/api/repairs/${encodeURIComponent(repairId)}/acceptance.pdf`)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank", "noopener,noreferrer");
+        setTimeout(() => URL.revokeObjectURL(url), 120_000);
+      })
+      .catch((e) => alert(String(e)));
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -182,8 +216,20 @@ export function KundenPage() {
           </div>
         </section>
 
-        <section className="xl:col-span-7 rt-panel rt-panel-violet">
-          <h2 className="text-sm font-bold text-white tracking-wide mb-4">Kundenliste</h2>
+        <section className="xl:col-span-7 rt-panel rt-panel-violet space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-white tracking-wide">Kundenliste</h2>
+            {selectedCustomer && (
+              <button
+                type="button"
+                className="text-xs text-[#00d4ff] underline"
+                onClick={() => setSelectedCustomer(null)}
+              >
+                Auswahl aufheben
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-zinc-500">Zeile anklicken für Reparatur-Historie & gespeicherte Annahme-PDFs.</p>
           <div className="rt-table-wrap">
             <table className="rt-table">
               <thead>
@@ -196,7 +242,13 @@ export function KundenPage() {
               </thead>
               <tbody>
                 {rows.map((c) => (
-                  <tr key={c.id}>
+                  <tr
+                    key={c.id}
+                    className={`cursor-pointer transition-colors ${
+                      selectedCustomer?.id === c.id ? "bg-[#39ff14]/10" : "hover:bg-white/5"
+                    }`}
+                    onClick={() => setSelectedCustomer(c)}
+                  >
                     <td className="font-medium text-white">{c.name}</td>
                     <td className="hidden sm:table-cell text-zinc-400">{c.email ?? "—"}</td>
                     <td className="hidden md:table-cell text-zinc-400">{c.phone ?? "—"}</td>
@@ -209,6 +261,61 @@ export function KundenPage() {
             </table>
           </div>
           {rows.length === 0 && <p className="text-zinc-500 text-sm mt-4 text-center">Noch keine Kunden manuell angelegt.</p>}
+
+          {selectedCustomer && (
+            <div className="border-t border-white/10 pt-4 space-y-3">
+              <h3 className="text-sm font-bold text-violet-200">
+                Historie – {selectedCustomer.name}
+              </h3>
+              {historyLoading && <p className="text-zinc-500 text-sm">Laden…</p>}
+              {!historyLoading && repairHistory && repairHistory.length === 0 && (
+                <p className="text-zinc-500 text-sm">Keine Reparaturaufträge mit diesem Kunden verknüpft.</p>
+              )}
+              {!historyLoading && repairHistory && repairHistory.length > 0 && (
+                <div className="rt-table-wrap max-h-[40vh] overflow-y-auto">
+                  <table className="rt-table text-sm">
+                    <thead>
+                      <tr>
+                        <th>Tracking</th>
+                        <th>Status</th>
+                        <th className="hidden sm:table-cell">Datum</th>
+                        <th>Summe</th>
+                        <th>Annahme-PDF</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {repairHistory.map((r) => (
+                        <tr key={r.id}>
+                          <td className="font-mono text-[#00d4ff]">{r.tracking_code}</td>
+                          <td className="text-zinc-300">{r.status.replace(/_/g, " ")}</td>
+                          <td className="hidden sm:table-cell text-zinc-500 text-xs">
+                            {new Date(r.created_at).toLocaleString("de-DE")}
+                          </td>
+                          <td className="text-zinc-300">{(r.total_cents / 100).toFixed(2)} €</td>
+                          <td>
+                            {r.acceptance_pdf_path ? (
+                              <button
+                                type="button"
+                                className="text-[#39ff14] underline text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openAcceptancePdf(r.id);
+                                }}
+                              >
+                                Öffnen
+                              </button>
+                            ) : (
+                              <span className="text-zinc-600 text-xs">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </section>
       </div>
     </RtShell>
