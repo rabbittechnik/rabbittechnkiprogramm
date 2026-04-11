@@ -1,5 +1,5 @@
 /**
- * SumUp Transaktionen (v2.1) – u. a. für Reader-/Terminal-Zahlungen per foreign_transaction_id.
+ * SumUp Transaktionen (v2.1) – Abgleich per foreign_transaction_id (z. B. Payment Switch / Tap to Pay).
  * @see https://developer.sumup.com/api/transactions/get
  */
 

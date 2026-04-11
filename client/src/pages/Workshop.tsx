@@ -54,9 +54,10 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   const [newPartStatus, setNewPartStatus] = useState<"bestellt" | "vor_ort">("bestellt");
   const [newPartBarcode, setNewPartBarcode] = useState("");
   const [pickupOpen, setPickupOpen] = useState(false);
-  const [sumupStep, setSumupStep] = useState<"qr" | "terminal" | null>(null);
+  const [sumupStep, setSumupStep] = useState<"qr" | "tap" | null>(null);
   const [sumupData, setSumupData] = useState<{
-    mode?: "terminal";
+    mode?: "tap_to_pay";
+    tapToPayUrl?: string;
     sumupUrl?: string;
     payment_url?: string;
     qrDataUrl?: string;
@@ -225,7 +226,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
 
   /** SumUp: Webhook-Fallback – Online-Checkout oder Terminal-Transaktion per API prüfen (alle 45 s + sofort beim Öffnen). */
   useEffect(() => {
-    if (!pickupOpen || (sumupStep !== "qr" && sumupStep !== "terminal") || !selected?.id) return;
+    if (!pickupOpen || (sumupStep !== "qr" && sumupStep !== "tap") || !selected?.id) return;
     const repairId = selected.id;
     const syncOnce = async () => {
       try {
@@ -251,16 +252,16 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     return () => window.clearInterval(t);
   }, [pickupOpen, sumupStep, selected?.id]);
 
-  const startSumupTerminal = async () => {
+  const startSumupTapToPay = async () => {
     if (!selected) return;
     setPickupErr(null);
     try {
-      const r = await fetchWorkshop<{ mode?: string; hint: string }>(`/api/repairs/${selected.id}/pickup`, {
+      const r = await fetchWorkshop<{ mode?: string; hint: string; tapToPayUrl?: string }>(`/api/repairs/${selected.id}/pickup`, {
         method: "POST",
-        body: JSON.stringify({ type: "sumup_terminal" }),
+        body: JSON.stringify({ type: "sumup_tap_to_pay" }),
       });
-      setSumupData({ mode: "terminal", hint: r.hint });
-      setSumupStep("terminal");
+      setSumupData({ mode: "tap_to_pay", hint: r.hint, tapToPayUrl: r.tapToPayUrl });
+      setSumupStep("tap");
     } catch (e) {
       setPickupErr(String(e));
     }
@@ -365,8 +366,8 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                       {r.payment_method === "ueberweisung"
                         ? "Überweisung"
                         : r.payment_method === "sumup"
-                          ? r.sumup_channel === "terminal"
-                            ? "SumUp-Terminal"
+                          ? r.sumup_channel === "tap_to_pay" || r.sumup_channel === "terminal"
+                            ? "SumUp Tap to Pay"
                             : "SumUp (Online)"
                           : r.payment_method === "bar"
                             ? "Bar"
@@ -416,7 +417,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <div className="rounded-xl border border-[#39ff14]/35 bg-[#39ff14]/5 p-4">
                   <p className="text-sm font-semibold text-[#39ff14] mb-2">Abholung &amp; Zahlung</p>
                   <p className="text-xs text-zinc-500 mb-3">
-                    Sobald der Kunde das Gerät abholt: Zahlungsart wählen (Bar, SumUp online, SumUp-Terminal oder
+                    Sobald der Kunde das Gerät abholt: Zahlungsart wählen (Bar, SumUp online, Tap to Pay oder
                     Überweisung). Die
                     Rechnung-PDF passt sich automatisch an.
                   </p>
@@ -621,15 +622,15 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <button
                   type="button"
                   className="w-full min-h-[48px] rounded-xl border border-emerald-500/45 text-emerald-200 hover:bg-emerald-500/10 text-sm font-medium"
-                  onClick={() => void startSumupTerminal()}
+                  onClick={() => void startSumupTapToPay()}
                 >
-                  SumUp-Gerät / EC am Kartenterminal (Vor-Ort)
+                  Zahlung per Tap to Pay (Kartenzahlung am Smartphone)
                 </button>
                 <p className="text-[11px] text-zinc-600">
-                  Online: RABBIT_SUMUP_API_KEY, RABBIT_SUMUP_MERCHANT_CODE. Terminal zusätzlich RABBIT_SUMUP_READER_ID,
-                  RABBIT_SUMUP_AFFILIATE_APP_ID, RABBIT_SUMUP_AFFILIATE_KEY. Webhook{" "}
-                  <span className="font-mono text-zinc-500">…/webhook/sumup</span> (RABBIT_SUMUP_WEBHOOK_URL). Nach
-                  erfolgreicher Zahlung schließt sich der Auftrag automatisch – „Zahlung erhalten“ bleibt als Fallback.
+                  Online: API-Key + Merchant-Code. Tap to Pay: Affiliate App-ID + Affiliate-Key, öffentliche HTTPS-URL
+                  (Callback <span className="font-mono text-zinc-500">…/api/sumup-payment-callback</span>). SumUp
+                  Business App auf demselben Gerät. Webhook{" "}
+                  <span className="font-mono text-zinc-500">…/webhook/sumup</span> optional für Online-Karte.
                 </p>
               </>
             ) : sumupStep === "qr" ? (
@@ -678,9 +679,17 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
             ) : (
               <>
                 <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 text-center font-medium">
-                  SumUp-Terminal
+                  Tap to Pay (SumUp-App)
                 </p>
                 <p className="text-xs text-zinc-300 leading-relaxed">{sumupData?.hint}</p>
+                {sumupData?.tapToPayUrl && (
+                  <a
+                    href={sumupData.tapToPayUrl}
+                    className="rt-btn-confirm w-full min-h-[48px] text-center flex items-center justify-center no-underline"
+                  >
+                    SumUp-Zahlung in der App öffnen
+                  </a>
+                )}
                 <button type="button" className="rt-btn-confirm w-full min-h-[48px]" onClick={() => void completeSumupPickup()}>
                   Zahlung erhalten – Abholung abschließen
                 </button>

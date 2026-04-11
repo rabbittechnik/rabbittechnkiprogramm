@@ -34,9 +34,13 @@ import { uploadsDir } from "./lib/dataPaths.js";
 import { getWorkshopStatsOverview } from "./lib/workshopStats.js";
 import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE, transferPurposeFromTracking } from "./lib/paymentInfo.js";
 import { createSumUpHostedCheckout } from "./lib/sumupCheckout.js";
-import { createSumUpReaderCheckout } from "./lib/sumupReaderCheckout.js";
-import { resolveSumUpWebhookUrl } from "./lib/publicUrl.js";
-import { processSumUpWebhookPayload, syncRepairPaymentFromSumUp } from "./lib/sumupPaidSync.js";
+import { buildSumUpPaymentSwitchUrl } from "./lib/sumupTapToPayUrl.js";
+import { resolveSumUpWebhookUrl, resolveSumUpAppPaymentCallbackUrl } from "./lib/publicUrl.js";
+import {
+  processSumUpWebhookPayload,
+  syncPaymentFromSumUpForeignTxId,
+  syncRepairPaymentFromSumUp,
+} from "./lib/sumupPaidSync.js";
 import { appendSumupWebhookLog } from "./lib/sumupWebhookLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -72,8 +76,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
   /**
-   * SumUp: Online-Checkout (CHECKOUT_STATUS_CHANGED → GET /checkouts/{id}) und Reader-Terminal
-   * (return_url-Callback → Transaktion per GET …/transactions?foreign_transaction_id=… verifizieren).
+   * SumUp: Online-Checkout (CHECKOUT_STATUS_CHANGED → GET /checkouts/{id}).
    * Antwortet sofort mit 200 JSON, Verarbeitung asynchron.
    * @see https://developer.sumup.com/online-payments/webhooks/
    */
@@ -96,6 +99,34 @@ export function registerRoutes(app: Express, db: Database.Database) {
         }
       })();
     });
+  });
+
+  /**
+   * SumUp Payment Switch: Rückkehr aus der SumUp-App nach Tap to Pay (Query smp-status, foreign-tx-id).
+   * Verifizierung: Transaktions-API (Betrag + Status).
+   */
+  app.get("/api/sumup-payment-callback", async (req, res) => {
+    const q = req.query;
+    const foreign = String(q["foreign-tx-id"] ?? "").trim();
+    if (foreign) {
+      try {
+        await syncPaymentFromSumUpForeignTxId(db, foreign);
+      } catch (e) {
+        console.error("[sumup-payment-callback]", e);
+      }
+    }
+    const status = String(q["smp-status"] ?? "").toLowerCase();
+    const ok = status === "success";
+    res
+      .status(200)
+      .type("html")
+      .send(
+        `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>SumUp</title></head><body style="font-family:system-ui,sans-serif;padding:1.5rem;max-width:32rem;margin:auto;background:#0a1220;color:#e4e4e7;">` +
+          `<h1 style="font-size:1.1rem;color:#7ee8ff;">Zahlung ${ok ? "erfolgreich" : "beendet"}</h1>` +
+          `<p style="line-height:1.5;">Sie können dieses Fenster schließen und zur Werkstatt bzw. zum Auftrag zurückkehren. ` +
+          `Der Zahlungsstatus wird im System aktualisiert, sobald SumUp die Transaktion verbucht hat.</p>` +
+          `</body></html>`
+      );
   });
 
   /** Öffentliche Kennzahlen für die Hauptseite */
@@ -551,7 +582,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
   /**
    * Abholung am Tablet: Zahlungsart wählen → Status/Rechnung anpassen.
-   * SumUp Online: type=sumup_link (QR/URL). SumUp Terminal: type=sumup_terminal (Reader-Checkout).
+   * SumUp Online: type=sumup_link (QR/URL). Tap to Pay: type=sumup_tap_to_pay (SumUp-App / Payment Switch).
    * Nach Zahlung (automatisch oder manuell): type=sumup_complete.
    */
   app.post("/api/repairs/:id/pickup", requireWorkshopAuth, async (req, res) => {
@@ -619,7 +650,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
         });
         db.prepare(
           `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, sumup_channel = 'online',
-             sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
+             sumup_foreign_tx_id = NULL, sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
              payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
         ).run(checkout.checkoutId, checkout.hostedCheckoutUrl, id);
         const qrDataUrl = await QRCode.toDataURL(checkout.hostedCheckoutUrl, {
@@ -641,9 +672,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
 
-    if (type === "sumup_terminal") {
+    if (type === "sumup_tap_to_pay") {
       if (row.status !== "fertig") {
-        res.status(400).json({ error: "SumUp-Terminal nur bei Status „fertig zur Abholung“ (vor Abschluss der Abholung)." });
+        res.status(400).json({ error: "Tap to Pay nur bei Status „fertig zur Abholung“ (vor Abschluss der Abholung)." });
         return;
       }
       const fullRow = db
@@ -660,10 +691,6 @@ export function registerRoutes(app: Express, db: Database.Database) {
       }
       const apiKey = process.env.RABBIT_SUMUP_API_KEY?.trim();
       const merchantCode = process.env.RABBIT_SUMUP_MERCHANT_CODE?.trim();
-      const readerId =
-        String((req.body as { reader_id?: string })?.reader_id ?? "").trim() ||
-        process.env.RABBIT_SUMUP_READER_ID?.trim() ||
-        "";
       const affiliateAppId = process.env.RABBIT_SUMUP_AFFILIATE_APP_ID?.trim();
       const affiliateKey = process.env.RABBIT_SUMUP_AFFILIATE_KEY?.trim();
       if (!apiKey || !merchantCode) {
@@ -673,47 +700,46 @@ export function registerRoutes(app: Express, db: Database.Database) {
         });
         return;
       }
-      if (!readerId) {
-        res.status(503).json({
-          error:
-            "SumUp-Reader fehlt: RABBIT_SUMUP_READER_ID setzen (Reader-ID aus SumUp API GET …/readers, z. B. rdr_…) oder reader_id im Request-Body.",
-        });
-        return;
-      }
       if (!affiliateAppId || !affiliateKey) {
         res.status(503).json({
           error:
-            "SumUp-Terminal (Card-Present): RABBIT_SUMUP_AFFILIATE_APP_ID und RABBIT_SUMUP_AFFILIATE_KEY setzen (SumUp → Einstellungen → Für Entwickler → Affiliate Keys).",
+            "Tap to Pay (Payment Switch): RABBIT_SUMUP_AFFILIATE_APP_ID und RABBIT_SUMUP_AFFILIATE_KEY setzen (SumUp → Einstellungen → Für Entwickler → Affiliate Keys; App-ID muss zum Key passen).",
+        });
+        return;
+      }
+      const callbackUrl = resolveSumUpAppPaymentCallbackUrl(req);
+      if (!callbackUrl) {
+        res.status(503).json({
+          error:
+            "Öffentliche Basis-URL fehlt (PUBLIC_TRACKING_URL / RABBIT_PUBLIC_SITE_URL) – für den SumUp-App-Rückruf per HTTPS erforderlich.",
         });
         return;
       }
       const foreignTxId = randomUUID();
-      const webhookUrl = resolveSumUpWebhookUrl(req);
-      const totalCents = Math.max(1, Math.round(fullRow.total_cents));
+      const amountMajor = Math.max(0.01, fullRow.total_cents / 100).toFixed(2);
       try {
-        const readerOut = await createSumUpReaderCheckout({
-          apiKey,
-          merchantCode,
-          readerId,
-          totalCents,
-          foreignTransactionId: foreignTxId,
-          affiliateAppId,
+        const tapToPayUrl = buildSumUpPaymentSwitchUrl({
+          amountMajor,
+          currency: "EUR",
           affiliateKey,
-          returnUrl: webhookUrl,
-          description: `Rabbit-Technik ${fullRow.tracking_code} · ${String(fullRow.customer_name).slice(0, 120)}`,
+          appId: affiliateAppId,
+          title: `Rabbit-Technik ${fullRow.tracking_code}`,
+          foreignTxId,
+          callbackSuccessUrl: callbackUrl,
+          callbackFailUrl: callbackUrl,
         });
         db.prepare(
           `UPDATE repairs SET
-             sumup_checkout_id = NULL, sumup_checkout_url = NULL, sumup_channel = 'terminal',
-             sumup_terminal_foreign_id = ?, sumup_terminal_client_transaction_id = ?,
+             sumup_checkout_id = NULL, sumup_checkout_url = NULL, sumup_channel = 'tap_to_pay',
+             sumup_foreign_tx_id = ?, sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
              payment_method = 'sumup', updated_at = datetime('now')
            WHERE id = ?`
-        ).run(foreignTxId, readerOut.client_transaction_id, id);
+        ).run(foreignTxId, id);
         res.json({
-          mode: "terminal",
-          hint: "Betrag wurde an das SumUp-Gerät gesendet. Bitte Karte am Reader mit Chip oder kontaktlos zahlen (ca. 60 s Zeitfenster). Nach erfolgreicher Zahlung wird der Auftrag automatisch als bezahlt markiert (Webhook + Abgleich). „Zahlung erhalten“ bleibt als Fallback.",
-          foreign_transaction_id: foreignTxId,
-          client_transaction_id: readerOut.client_transaction_id,
+          mode: "tap_to_pay",
+          tapToPayUrl,
+          foreign_tx_id: foreignTxId,
+          hint: "Link auf dem Smartphone mit installierter SumUp Business App öffnen. Betrag auswählen bzw. übernehmen und Zahlung per Tap to Pay (Karte ans Telefon halten). Danach Rückkehr zum Browser; der Auftrag wird über Callback und API als „bezahlt“ gesetzt. „Zahlung erhalten“ bleibt als Fallback.",
         });
       } catch (e) {
         res.status(502).json({ error: String(e) });
@@ -778,7 +804,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
 
-    res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_terminal, sumup_complete." });
+    res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_tap_to_pay, sumup_complete." });
   });
 
   /**
@@ -851,7 +877,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       });
       db.prepare(
         `UPDATE repairs SET sumup_checkout_id = ?, sumup_checkout_url = ?, sumup_channel = 'online',
-           sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
+           sumup_foreign_tx_id = NULL, sumup_terminal_foreign_id = NULL, sumup_terminal_client_transaction_id = NULL,
            payment_method = 'sumup', updated_at = datetime('now') WHERE id = ?`
       ).run(checkout.checkoutId, checkout.hostedCheckoutUrl, repairId);
       const qrDataUrl = await QRCode.toDataURL(checkout.hostedCheckoutUrl, {

@@ -185,8 +185,8 @@ export async function writeInvoicePdf(
     payChunk("Barzahlung bei Abholung – beglichen.", 10, { color: COL.text });
   } else if (pm === "sumup" && ps === "bezahlt") {
     const ch = String(repair.sumup_channel ?? "");
-    if (ch === "terminal") {
-      payChunk("EC-/Girocard am SumUp-Kartenterminal (Vor-Ort) – beglichen.", 10, { color: COL.text });
+    if (ch === "tap_to_pay" || ch === "terminal") {
+      payChunk("Kartenzahlung per SumUp Tap to Pay (Smartphone / SumUp-App) – beglichen.", 10, { color: COL.text });
     } else {
       payChunk("EC-/Kreditkarte über SumUp (Online-Zahlung) – beglichen.", 10, { color: COL.text });
     }

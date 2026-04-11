@@ -11,8 +11,10 @@ export type RepairRowLite = {
   payment_method: string | null;
   sumup_checkout_id: string | null;
   sumup_channel?: string | null;
+  /** Payment Switch foreign-tx-id (Tap to Pay / SumUp-App). */
+  sumup_foreign_tx_id?: string | null;
+  /** @deprecated Nur Legacy-Reader-Zeilen; Abgleich über sumup_foreign_tx_id bevorzugen. */
   sumup_terminal_foreign_id?: string | null;
-  sumup_terminal_client_transaction_id?: string | null;
 };
 
 function getSumUpApiKey(): string | null {
@@ -46,7 +48,7 @@ function amountMatchesRepair(checkout: SumUpCheckoutResource, repair: RepairRowL
   return Math.abs(got - expected) < 0.02;
 }
 
-function amountMatchesTerminalTxn(txn: SumUpTransactionResource, repair: RepairRowLite): boolean {
+function amountMatchesAppTxn(txn: SumUpTransactionResource, repair: RepairRowLite): boolean {
   const expected = Math.max(0.01, repair.total_cents / 100);
   const got = typeof txn.amount === "number" ? txn.amount : Number(txn.amount);
   if (!Number.isFinite(got)) return false;
@@ -74,12 +76,13 @@ function extractWebhookString(body: unknown, keys: string[]): string | null {
   return null;
 }
 
-export function extractTerminalForeignTransactionIdFromWebhook(body: unknown): string | null {
-  return extractWebhookString(body, ["foreign_transaction_id", "foreignTransactionId"]);
-}
-
-export function extractTerminalClientTransactionIdFromWebhook(body: unknown): string | null {
-  return extractWebhookString(body, ["client_transaction_id", "clientTransactionId"]);
+export function extractForeignTransactionIdFromWebhook(body: unknown): string | null {
+  return extractWebhookString(body, [
+    "foreign_transaction_id",
+    "foreignTransactionId",
+    "foreign-tx-id",
+    "foreign_tx_id",
+  ]);
 }
 
 /**
@@ -151,9 +154,9 @@ export async function applySumUpPaidCheckout(
 }
 
 /**
- * Terminal-/Reader-Zahlung: Status aus Transactions-API (foreign_transaction_id).
+ * Tap to Pay / Payment Switch (SumUp-App): Status aus Transactions-API (foreign_transaction_id).
  */
-export async function applySumUpPaidTerminalTransaction(
+export async function applySumUpPaidTapToPayTransaction(
   db: Database.Database,
   txn: SumUpTransactionResource
 ): Promise<{ applied: boolean; repair_id?: string; reason?: string }> {
@@ -162,31 +165,22 @@ export async function applySumUpPaidTerminalTransaction(
   }
 
   const foreign = String(txn.foreign_transaction_id ?? "").trim();
-  const client = String(txn.client_transaction_id ?? "").trim();
-
-  let repair = foreign
-    ? (db
-        .prepare(
-          `SELECT id, status, total_cents, payment_status, payment_method, sumup_checkout_id, sumup_channel, sumup_terminal_foreign_id, sumup_terminal_client_transaction_id
-           FROM repairs WHERE sumup_terminal_foreign_id = ?`
-        )
-        .get(foreign) as RepairRowLite | undefined)
-    : undefined;
-
-  if (!repair && client) {
-    repair = db
-      .prepare(
-        `SELECT id, status, total_cents, payment_status, payment_method, sumup_checkout_id, sumup_channel, sumup_terminal_foreign_id, sumup_terminal_client_transaction_id
-         FROM repairs WHERE sumup_terminal_client_transaction_id = ?`
-      )
-      .get(client) as RepairRowLite | undefined;
+  if (!foreign) {
+    return { applied: false, reason: "no_foreign_id_in_txn" };
   }
+
+  const repair = db
+    .prepare(
+      `SELECT id, status, total_cents, payment_status, payment_method, sumup_checkout_id, sumup_channel, sumup_foreign_tx_id, sumup_terminal_foreign_id
+       FROM repairs WHERE sumup_foreign_tx_id = ? OR sumup_terminal_foreign_id = ?`
+    )
+    .get(foreign, foreign) as RepairRowLite | undefined;
 
   if (!repair) {
     return { applied: false, reason: "repair_not_found" };
   }
 
-  if (!amountMatchesTerminalTxn(txn, repair)) {
+  if (!amountMatchesAppTxn(txn, repair)) {
     return { applied: false, reason: "amount_mismatch" };
   }
 
@@ -201,7 +195,7 @@ export async function applySumUpPaidTerminalTransaction(
        status = ?,
        payment_status = 'bezahlt',
        payment_method = 'sumup',
-       sumup_channel = 'terminal',
+       sumup_channel = 'tap_to_pay',
        payment_paid_at = datetime('now'),
        updated_at = datetime('now')
      WHERE id = ?`
@@ -217,7 +211,7 @@ export async function applySumUpPaidTerminalTransaction(
   return { applied: true, repair_id: repair.id };
 }
 
-export async function syncPaymentFromSumUpTerminalForeignId(
+export async function syncPaymentFromSumUpForeignTxId(
   db: Database.Database,
   foreignTransactionId: string
 ): Promise<{ updated: boolean; txn_status?: string; repair_id?: string }> {
@@ -239,7 +233,7 @@ export async function syncPaymentFromSumUpTerminalForeignId(
     return { updated: false, txn_status: "FETCH_ERROR" };
   }
 
-  const result = await applySumUpPaidTerminalTransaction(db, txn);
+  const result = await applySumUpPaidTapToPayTransaction(db, txn);
   const st = String(txn.status ?? txn.simple_status ?? "");
   return {
     updated: result.applied,
@@ -248,38 +242,7 @@ export async function syncPaymentFromSumUpTerminalForeignId(
   };
 }
 
-export async function syncPaymentFromSumUpTerminalClientId(
-  db: Database.Database,
-  clientTransactionId: string
-): Promise<{ updated: boolean; txn_status?: string; repair_id?: string }> {
-  const keys = getSumUpKeys();
-  if (!keys) {
-    return { updated: false, txn_status: "NO_API_KEY" };
-  }
-  const cid = clientTransactionId.trim();
-  if (!cid) return { updated: false, txn_status: "NO_ID" };
-
-  let txn: SumUpTransactionResource;
-  try {
-    txn = await getSumUpTransaction({
-      apiKey: keys.apiKey,
-      merchantCode: keys.merchantCode,
-      clientTransactionId: cid,
-    });
-  } catch {
-    return { updated: false, txn_status: "FETCH_ERROR" };
-  }
-
-  const result = await applySumUpPaidTerminalTransaction(db, txn);
-  const st = String(txn.status ?? txn.simple_status ?? "");
-  return {
-    updated: result.applied,
-    txn_status: st || undefined,
-    repair_id: result.repair_id,
-  };
-}
-
-/** SumUp POST /webhook/sumup: Online-Checkout und Reader-return_url. */
+/** SumUp POST /webhook/sumup: Online-Checkout; optionale Payloads mit foreign_transaction_id (App / Tap to Pay). */
 export async function processSumUpWebhookPayload(db: Database.Database, body: unknown): Promise<void> {
   const o = body as { event_type?: string; id?: string };
   const et = String(o?.event_type ?? "");
@@ -290,15 +253,9 @@ export async function processSumUpWebhookPayload(db: Database.Database, body: un
     return;
   }
 
-  const foreign = extractTerminalForeignTransactionIdFromWebhook(body);
+  const foreign = extractForeignTransactionIdFromWebhook(body);
   if (foreign) {
-    await syncPaymentFromSumUpTerminalForeignId(db, foreign);
-    return;
-  }
-
-  const client = extractTerminalClientTransactionIdFromWebhook(body);
-  if (client) {
-    await syncPaymentFromSumUpTerminalClientId(db, client);
+    await syncPaymentFromSumUpForeignTxId(db, foreign);
   }
 }
 
@@ -309,7 +266,7 @@ export async function syncRepairPaymentFromSumUp(
   const keys = getSumUpKeys();
   const repair = db
     .prepare(
-      `SELECT id, status, total_cents, payment_status, payment_method, sumup_checkout_id, sumup_channel, sumup_terminal_foreign_id, sumup_terminal_client_transaction_id
+      `SELECT id, status, total_cents, payment_status, payment_method, sumup_checkout_id, sumup_channel, sumup_foreign_tx_id, sumup_terminal_foreign_id
        FROM repairs WHERE id = ?`
     )
     .get(repairId) as RepairRowLite | null | undefined;
@@ -324,14 +281,18 @@ export async function syncRepairPaymentFromSumUp(
     return { updated: false, checkout_status: "NO_API_KEY" };
   }
 
-  if (repair.sumup_channel === "terminal" && repair.sumup_terminal_foreign_id) {
+  const appForeign =
+    String(repair.sumup_foreign_tx_id ?? "").trim() || String(repair.sumup_terminal_foreign_id ?? "").trim();
+  const tapChannel = repair.sumup_channel === "tap_to_pay" || repair.sumup_channel === "terminal";
+
+  if (tapChannel && appForeign) {
     try {
       const txn = await getSumUpTransaction({
         apiKey: keys.apiKey,
         merchantCode: keys.merchantCode,
-        foreignTransactionId: repair.sumup_terminal_foreign_id,
+        foreignTransactionId: appForeign,
       });
-      const result = await applySumUpPaidTerminalTransaction(db, txn);
+      const result = await applySumUpPaidTapToPayTransaction(db, txn);
       const full = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(repairId);
       const st = String(txn.status ?? txn.simple_status ?? "");
       if (result.applied) {
