@@ -10,6 +10,7 @@ type Row = {
   status: string;
   total_cents: number;
   payment_status: string;
+  payment_due_at: string | null;
   updated_at: string;
   created_at: string;
   customer_name: string;
@@ -144,6 +145,18 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     await refresh();
   };
 
+  const setPaymentStatus = async (payment_status: "offen" | "bezahlt") => {
+    if (!selected) return;
+    await fetchWorkshop(`/api/repairs/${selected.id}/payment`, {
+      method: "PATCH",
+      body: JSON.stringify({ payment_status }),
+    });
+    await refresh();
+    setSelected((prev) => (prev ? { ...prev, payment_status } : null));
+    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
+    setDetail(d);
+  };
+
   if (gate === "loading") {
     return (
       <RtShell title={pageTitle}>
@@ -211,7 +224,17 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <p className="text-sm text-zinc-300 mt-1">
                   {r.customer_name} · {r.device_type} {[r.brand, r.model].filter(Boolean).join(" ")}
                 </p>
-                <p className="text-xs text-zinc-500 mt-1">{(r.total_cents / 100).toFixed(2)} € · {r.payment_status}</p>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {(r.total_cents / 100).toFixed(2)} € ·{" "}
+                  {r.payment_status === "bezahlt" ? (
+                    <span className="text-emerald-400/90">bezahlt</span>
+                  ) : (
+                    <span className="text-amber-300/90">offen</span>
+                  )}
+                  {(r.status === "fertig" || r.status === "abgeholt") && r.payment_status === "offen" && r.payment_due_at && (
+                    <span className="text-zinc-600"> · bis {new Date(r.payment_due_at.replace(" ", "T")).toLocaleDateString("de-DE")}</span>
+                  )}
+                </p>
               </button>
             ))}
             {rows.length === 0 && <p className="text-zinc-500 text-sm">Noch keine Aufträge.</p>}
@@ -341,6 +364,38 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
               >
                 Rechnung PDF
               </a>
+              {(selected.status === "fertig" || selected.status === "abgeholt") && (
+                <div className="rounded-xl border border-white/10 bg-[#060b13]/80 p-3 space-y-2">
+                  <p className="text-xs text-zinc-500">Zahlungsstatus</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={`px-3 py-2 rounded-lg text-xs border ${
+                        selected.payment_status === "offen"
+                          ? "border-amber-400 text-amber-200 bg-amber-500/10"
+                          : "border-white/15 text-zinc-400 hover:border-amber-400/40"
+                      }`}
+                      onClick={() => void setPaymentStatus("offen")}
+                    >
+                      Offen
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-3 py-2 rounded-lg text-xs border ${
+                        selected.payment_status === "bezahlt"
+                          ? "border-emerald-400 text-emerald-200 bg-emerald-500/10"
+                          : "border-white/15 text-zinc-400 hover:border-emerald-400/40"
+                      }`}
+                      onClick={() => void setPaymentStatus("bezahlt")}
+                    >
+                      Bezahlt
+                    </button>
+                  </div>
+                  <Link to="/rechnungen" className="text-xs text-[#39ff14] underline inline-block">
+                    Zur Rechnungsübersicht
+                  </Link>
+                </div>
+              )}
             </div>
           )}
         </section>

@@ -31,6 +31,7 @@ import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
 import { queueCustomerRepairNotification } from "./lib/repairCustomerNotify.js";
 import { uploadsDir } from "./lib/dataPaths.js";
 import { getWorkshopStatsOverview } from "./lib/workshopStats.js";
+import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE } from "./lib/paymentInfo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -488,6 +489,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(404).json({ error: "Nicht gefunden" });
       return;
     }
+    if (status === "fertig" && previous.status !== "fertig") {
+      db.prepare(`UPDATE repairs SET payment_due_at = datetime('now', '+7 days') WHERE id = ?`).run(id);
+    }
     const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as typeof previous;
     queueCustomerRepairNotification(db, id);
 
@@ -504,6 +508,44 @@ export function registerRoutes(app: Express, db: Database.Database) {
     db.prepare(`UPDATE repairs SET payment_status = ?, updated_at = datetime('now') WHERE id = ?`).run(ps, id);
     db.prepare(`UPDATE invoices SET payment_status = ? WHERE repair_id = ?`).run(ps, id);
     res.json({ ok: true });
+  });
+
+  /** Rechnungen & Zahlungsübersicht (Werkstatt) */
+  app.get("/api/invoices", requireWorkshopAuth, (_req, res) => {
+    const invoices = db
+      .prepare(
+        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_due_at,
+                r.created_at, r.updated_at,
+                i.invoice_number, i.created_at AS invoice_created_at,
+                c.name AS customer_name,
+                COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days')) AS due_at,
+                CASE
+                  WHEN r.payment_status = 'bezahlt' THEN 'bezahlt'
+                  WHEN datetime('now') > datetime(COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days')))
+                    THEN 'offen_ueberfaellig'
+                  ELSE 'offen_in_frist'
+                END AS payment_bucket
+         FROM repairs r
+         JOIN invoices i ON i.repair_id = r.id
+         JOIN customers c ON c.id = r.customer_id
+         WHERE r.status IN ('fertig', 'abgeholt') AND r.total_cents > 0
+         ORDER BY
+           CASE
+             WHEN r.payment_status = 'bezahlt' THEN 2
+             WHEN datetime('now') > datetime(COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days'))) THEN 0
+             ELSE 1
+           END,
+           datetime(COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days'))) ASC,
+           r.tracking_code DESC`
+      )
+      .all();
+    res.json({
+      invoices,
+      paymentTerms: {
+        headline: PAYMENT_TERMS_HEADLINE_DE,
+        lines: PAYMENT_TERMS_LINES_DE,
+      },
+    });
   });
 
   app.post("/api/repairs/:id/parts", requireWorkshopAuth, (req, res) => {
@@ -706,13 +748,23 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const code = paramStr(req.params.code).trim();
     const row = db
       .prepare(
-        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.updated_at, r.created_at,
+        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_due_at,
+                r.updated_at, r.created_at,
                 r.problem_label, r.description, r.accessories,
                 c.name AS customer_name,
-                d.device_type, d.brand, d.model
+                d.device_type, d.brand, d.model,
+                i.invoice_number,
+                COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days')) AS payment_due_until,
+                CASE
+                  WHEN r.payment_status = 'bezahlt' THEN 'bezahlt'
+                  WHEN datetime('now') > datetime(COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days')))
+                    THEN 'offen_ueberfaellig'
+                  ELSE 'offen_in_frist'
+                END AS payment_bucket
          FROM repairs r
          JOIN customers c ON c.id = r.customer_id
          JOIN devices d ON d.id = r.device_id
+         LEFT JOIN invoices i ON i.repair_id = r.id
          WHERE r.tracking_code = ?`
       )
       .get(code);
@@ -726,6 +778,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       status: string;
       total_cents: number;
       payment_status: string;
+      payment_due_at: string | null;
       updated_at: string;
       created_at: string;
       problem_label: string | null;
@@ -735,8 +788,21 @@ export function registerRoutes(app: Express, db: Database.Database) {
       device_type: string;
       brand: string | null;
       model: string | null;
+      invoice_number: string | null;
+      payment_due_until: string;
+      payment_bucket: string;
     };
-    const { id: repairIdForParts, customer_name, device_type, brand, model, ...trackingRest } = repair;
+    const {
+      id: repairIdForParts,
+      customer_name,
+      device_type,
+      brand,
+      model,
+      invoice_number,
+      payment_due_until,
+      payment_bucket,
+      ...trackingRest
+    } = repair;
     const parts = db
       .prepare(`SELECT name, status, sale_cents FROM repair_parts WHERE repair_id = ?`)
       .all(repairIdForParts) as { name: string; status: string; sale_cents: number }[];
@@ -758,6 +824,13 @@ export function registerRoutes(app: Express, db: Database.Database) {
         device_type,
         brand: brand ?? null,
         model: model ?? null,
+      },
+      invoice_number,
+      payment_due_until,
+      payment_bucket,
+      paymentTerms: {
+        headline: PAYMENT_TERMS_HEADLINE_DE,
+        lines: PAYMENT_TERMS_LINES_DE,
       },
       parts,
       message,

@@ -90,6 +90,10 @@ export function TrackPage() {
     device: { device_type: string; brand: string | null; model: string | null };
     parts: { name: string; status: string; sale_cents: number }[];
     message: string | null;
+    invoice_number?: string | null;
+    payment_due_until?: string;
+    payment_bucket?: string;
+    paymentTerms?: { headline: string; lines: string[] };
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -262,6 +266,45 @@ export function TrackPage() {
                 informiert.
               </div>
             </div>
+
+            {(data.tracking.status === "fertig" || data.tracking.status === "abgeholt") &&
+              data.tracking.payment_status === "offen" &&
+              data.payment_due_until && (
+                <div className="rounded-2xl border border-amber-500/40 bg-[#0a1220]/95 p-5 space-y-3">
+                  <h2 className="text-sm font-bold text-amber-200 uppercase tracking-wider">Zahlung</h2>
+                  {data.invoice_number && (
+                    <p className="text-sm text-zinc-300">
+                      Rechnungsnr. <span className="font-mono text-[#00d4ff]">{data.invoice_number}</span>
+                    </p>
+                  )}
+                  <p className="text-sm text-zinc-300">
+                    Bitte begleichen Sie den Betrag innerhalb von <strong className="text-white">7 Tagen</strong>.{" "}
+                    {data.payment_bucket === "offen_ueberfaellig" ? (
+                      <span className="text-red-400">Die Zahlungsfrist ist überschritten – bitte umgehend begleichen oder Rücksprache.</span>
+                    ) : (
+                      <span>
+                        Fällig bis:{" "}
+                        <strong className="text-white">
+                          {new Date(data.payment_due_until.replace(" ", "T")).toLocaleString("de-DE", {
+                            dateStyle: "long",
+                            timeStyle: "short",
+                          })}
+                        </strong>
+                      </span>
+                    )}
+                  </p>
+                  {data.paymentTerms && (
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-xs font-semibold text-amber-100/90 mb-2">{data.paymentTerms.headline}</p>
+                      <ul className="text-xs text-zinc-400 space-y-1.5 list-disc list-inside leading-relaxed">
+                        {data.paymentTerms.lines.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
 
             {(data.tracking.status === "fertig" || data.tracking.status === "abgeholt") && (
               <div className="rounded-2xl border border-amber-500/35 bg-amber-500/5 p-5">

@@ -6,6 +6,7 @@ const NAV = [
   { to: "/", label: "Hauptseite" },
   { to: "/annahme", label: "Reparaturannahme" },
   { to: "/werkstatt", label: "Auftragsverwaltung" },
+  { to: "/rechnungen", label: "Rechnungen & Zahlung" },
   { to: "/kunden", label: "Kundenverwaltung" },
   { to: "/track", label: "Kunden-Tracking" },
   { to: "/lager", label: "Lager & Teile" },

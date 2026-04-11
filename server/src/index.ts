@@ -77,7 +77,7 @@ app.use("/uploads", express.static(UPLOAD_ROOT));
 app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
   const rows = db
     .prepare(
-      `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.updated_at, r.created_at,
+      `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_due_at, r.updated_at, r.created_at,
        c.name as customer_name, d.device_type, d.brand, d.model
        FROM repairs r
        JOIN customers c ON c.id = r.customer_id

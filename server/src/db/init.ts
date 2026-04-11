@@ -14,6 +14,7 @@ export function openDatabase(): Database.Database {
   db.exec(SCHEMA_SQL);
   migrateRepairsAcceptanceColumn(db);
   migrateRepairPartsBarcode(db);
+  migrateRepairsPaymentDueAt(db);
   return db;
 }
 
@@ -31,5 +32,18 @@ function migrateRepairPartsBarcode(db: Database.Database): void {
   }
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_repair_parts_barcode_unique ON repair_parts(barcode) WHERE barcode IS NOT NULL`
+  );
+}
+
+function migrateRepairsPaymentDueAt(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "payment_due_at")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN payment_due_at TEXT`);
+  }
+  db.exec(
+    `UPDATE repairs SET payment_due_at = datetime(updated_at, '+7 days')
+     WHERE payment_due_at IS NULL
+       AND status IN ('fertig', 'abgeholt')
+       AND payment_status = 'offen'`
   );
 }

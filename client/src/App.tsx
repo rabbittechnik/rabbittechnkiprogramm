@@ -7,6 +7,7 @@ import { KundenPage } from "./pages/KundenPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { LagerPage } from "./pages/LagerPage";
 import { StatistikPage } from "./pages/StatistikPage";
+import { RechnungenPage } from "./pages/RechnungenPage";
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/track" element={<TrackPage />} />
           <Route path="/track/:code" element={<TrackPage />} />
           <Route path="/lager" element={<LagerPage />} />
+          <Route path="/rechnungen" element={<RechnungenPage />} />
           <Route path="/statistik" element={<StatistikPage />} />
           <Route
             path="/einstellungen"

@@ -80,7 +80,7 @@ const tiles: {
     ),
   },
   {
-    to: "/werkstatt",
+    to: "/rechnungen",
     label: "Rechnungen & Zahlungen",
     glowRgb: "180, 100, 255",
     border: "border-violet-400/55",

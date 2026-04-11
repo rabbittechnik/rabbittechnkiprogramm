@@ -4,6 +4,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type Database from "better-sqlite3";
 
 import { invoicesDir } from "./dataPaths.js";
+import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE } from "./paymentInfo.js";
 
 export async function writeInvoicePdf(
   db: Database.Database,
@@ -13,10 +14,12 @@ export async function writeInvoicePdf(
   const repair = db
     .prepare(
       `SELECT r.*, c.name as customer_name, c.email, c.phone, c.address,
-       d.device_type, d.brand, d.model, d.serial_number
+       d.device_type, d.brand, d.model, d.serial_number,
+       COALESCE(r.payment_due_at, datetime(i.created_at, '+7 days'), datetime(r.created_at, '+7 days')) AS payment_due_until
        FROM repairs r
        JOIN customers c ON c.id = r.customer_id
        JOIN devices d ON d.id = r.device_id
+       LEFT JOIN invoices i ON i.repair_id = r.id
        WHERE r.id = ?`
     )
     .get(repairId) as Record<string, unknown> | undefined;
@@ -71,6 +74,21 @@ export async function writeInvoicePdf(
   draw(`Gesamt: ${(total / 100).toFixed(2)} €`, 13, true);
   y -= 20;
   draw(`Zahlungsstatus: ${String(repair.payment_status)}`);
+  const dueUntil = repair.payment_due_until != null ? String(repair.payment_due_until) : "";
+  if (String(repair.payment_status) === "offen" && dueUntil) {
+    y -= 4;
+    draw(
+      `Fällig am: ${new Date(dueUntil.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
+      10,
+      true
+    );
+  }
+  y -= 10;
+  draw(PAYMENT_TERMS_HEADLINE_DE, 11, true);
+  y -= 2;
+  for (const line of PAYMENT_TERMS_LINES_DE) {
+    draw(line, 9);
+  }
 
   const pdfDir = invoicesDir();
   const filePath = path.join(pdfDir, `${invoiceNumber}.pdf`);
