@@ -245,7 +245,7 @@ async function sendViaResend(opts: {
 }): Promise<{ sent: boolean; reason?: string }> {
   const apiKey = process.env.RABBIT_RESEND_API_KEY!.trim();
   const from = resolveResendFrom();
-  const body: Record<string, unknown> = {
+  const payload: Record<string, unknown> = {
     from,
     to: [opts.to],
     subject: opts.subject,
@@ -253,7 +253,7 @@ async function sendViaResend(opts: {
     text: opts.text,
   };
   if (opts.attachments?.length) {
-    body.attachments = opts.attachments.map((a) => ({
+    payload.attachments = opts.attachments.map((a) => ({
       filename: a.filename,
       content: fs.readFileSync(a.path).toString("base64"),
     }));
@@ -264,11 +264,11 @@ async function sendViaResend(opts: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
-  const body = (await r.json().catch(() => ({}))) as { message?: string };
+  const errJson = (await r.json().catch(() => ({}))) as { message?: string };
   if (!r.ok) {
-    return { sent: false, reason: body.message ?? `${r.status} ${r.statusText}` };
+    return { sent: false, reason: errJson.message ?? `${r.status} ${r.statusText}` };
   }
   return { sent: true };
 }
