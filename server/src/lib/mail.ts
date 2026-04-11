@@ -665,6 +665,8 @@ ${COMPANY.zipCity}
 
 Bitte bringen Sie nach Möglichkeit den Abholschein oder Ihren Namen zur Identifikation mit.
 
+Zahlung: Bar, Kartenzahlung (SumUp) oder – nur falls mit uns vereinbart – Überweisung; die Abwicklung erfolgt bei Abholung bzw. nach Absprache (keine pauschale 7-Tage-Überweisungspflicht).
+
 Reparaturdetails einsehen:
 ${trackingLink}
 
@@ -700,7 +702,10 @@ ${emailContentBlock(
        ${escapeHtml(COMPANY.street)}<br/>
        ${escapeHtml(COMPANY.zipCity)}
      </p>
-     <p style="margin:12px 0 0;font-size:12px;color:#64748b;">Bitte bringen Sie nach Möglichkeit den Abholschein oder Ihren Namen zur Identifikation mit.</p>`
+     <p style="margin:12px 0 0;font-size:12px;color:#64748b;">Bitte bringen Sie nach Möglichkeit den Abholschein oder Ihren Namen zur Identifikation mit.</p>
+     <p style="margin:14px 0 0;font-size:12px;line-height:1.55;color:#94a3b8;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;">
+       <strong style="color:#7ee8ff;">Zahlung:</strong> Bar, Kartenzahlung (SumUp) oder – nur bei Vereinbarung – Überweisung; bei Abholung in der Werkstatt. Keine pauschale 7-Tage-Überweisungspflicht.
+     </p>`
   )}
 ${emailTrackingHero(
     trackingLink,

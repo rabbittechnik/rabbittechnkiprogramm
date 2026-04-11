@@ -4,6 +4,26 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type Database from "better-sqlite3";
 import { formatVorschaeden } from "./mail.js";
 import { acceptanceDir } from "./dataPaths.js";
+import { formatDeBerlin } from "./formatBerlin.js";
+
+const W = 595;
+const H = 842;
+const M = 48;
+const CONTENT_W = W - M * 2;
+
+const COL = {
+  headerBg: rgb(0.04, 0.07, 0.13),
+  headerStripe: rgb(0, 0.83, 1),
+  title: rgb(0.95, 0.97, 1),
+  subtitle: rgb(0.55, 0.65, 0.78),
+  accent: rgb(0, 0.83, 1),
+  lime: rgb(0.22, 0.95, 0.2),
+  text: rgb(0.12, 0.14, 0.18),
+  muted: rgb(0.38, 0.42, 0.48),
+  boxBg: rgb(0.94, 0.97, 1),
+  boxBorder: rgb(0.65, 0.78, 0.92),
+  sigFrame: rgb(0.45, 0.55, 0.65),
+};
 
 function parseDataUrlImage(
   dataUrl: string | null | undefined
@@ -16,7 +36,7 @@ function parseDataUrlImage(
   return { kind, bytes: new Uint8Array(buf) };
 }
 
-/** Auftragsbestätigung inkl. Unterschrift (PNG/JPEG aus Data-URL) für Kunden-E-Mail und Archiv. */
+/** Auftragsbestätigung (Design wie Kunden-E-Mail / Rechnung-PDF). */
 export async function writeAcceptancePdf(db: Database.Database, repairId: string): Promise<string> {
   const row = db
     .prepare(
@@ -45,113 +65,142 @@ export async function writeAcceptancePdf(db: Database.Database, repairId: string
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  let page = pdf.addPage([595, 842]);
-  let y = page.getSize().height - 48;
-  const left = 48;
-  const line = 13;
-  const maxW = page.getSize().width - left * 2;
+  let page = pdf.addPage([W, H]);
+  let y = H - 52;
 
-  const draw = (text: string, size = 10, bold = false) => {
-    page.drawText(text, { x: left, y, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.12) });
-    y -= line;
+  const line = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; dy?: number } = {}) => {
+    const x = o.x ?? M;
+    const c = o.color ?? COL.text;
+    const f = o.bold ? fontBold : font;
+    page.drawText(text, { x, y, size, font: f, color: c });
+    y -= size + (o.dy ?? 4);
   };
 
+  page.drawRectangle({ x: 0, y: H - 100, width: W, height: 100, color: COL.headerBg });
+  page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: COL.headerStripe });
+
+  line("AUFTRAGSBESTÄTIGUNG", 9, { color: COL.subtitle, dy: 6 });
+  y -= 2;
+  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 8 });
+  line(`Tracking: ${String(row.tracking_code)}`, 11, { bold: true, color: COL.accent, dy: 6 });
+  const aufnahme = formatDeBerlin(String(row.created_at ?? ""), { dateStyle: "long", timeStyle: "short" });
+  line(`Aufnahme (Werkstattzeit Deutschland): ${aufnahme}`, 10, { color: COL.subtitle, dy: 10 });
+  y -= 8;
+
+  const metaLines = [
+    `Kunde: ${String(row.customer_name)}`,
+    row.email ? String(row.email) : "",
+    row.phone ? String(row.phone) : "",
+    row.address ? String(row.address) : "",
+  ].filter(Boolean);
+  const pad = 12;
+  const metaH = pad * 2 + metaLines.length * 14 + 6;
+  page.drawRectangle({
+    x: M - 4,
+    y: y - metaH,
+    width: CONTENT_W + 8,
+    height: metaH,
+    color: COL.boxBg,
+    borderColor: COL.boxBorder,
+    borderWidth: 0.8,
+  });
+  y -= pad;
+  for (const ml of metaLines) line(ml, 10, { color: COL.text, dy: 3 });
+  y -= pad + 10;
+
+  const sectionTitle = (t: string) => {
+    line(t.toUpperCase(), 9, { bold: true, color: COL.accent, dy: 6 });
+    y -= 4;
+  };
+
+  sectionTitle("Gerät");
+  line(`${row.device_type} – ${row.brand ?? ""} ${row.model ?? ""}`.trim(), 10, { dy: 3 });
+  if (row.serial_number) line(`SN: ${String(row.serial_number)}`, 10, { dy: 3 });
+  y -= 8;
+
+  if (row.problem_label) line(`Anliegen: ${String(row.problem_label)}`, 10, { dy: 3 });
+
   const drawWrapped = (label: string, body: string, size = 9) => {
-    draw(label, 10, true);
+    line(label, 10, { bold: true, color: COL.text, dy: 4 });
     y -= 2;
     const words = body.split(/\s+/);
     let lineBuf = "";
+    const maxW = CONTENT_W;
     for (const w of words) {
       const test = lineBuf ? `${lineBuf} ${w}` : w;
       const wTest = font.widthOfTextAtSize(test, size);
       if (wTest > maxW && lineBuf) {
-        page.drawText(lineBuf, { x: left, y, size, font, color: rgb(0.2, 0.2, 0.22) });
-        y -= line - 1;
+        page.drawText(lineBuf, { x: M, y, size, font, color: COL.muted });
+        y -= size + 3;
         lineBuf = w;
       } else {
         lineBuf = test;
       }
     }
     if (lineBuf) {
-      page.drawText(lineBuf, { x: left, y, size, font, color: rgb(0.2, 0.2, 0.22) });
-      y -= line;
+      page.drawText(lineBuf, { x: M, y, size, font, color: COL.muted });
+      y -= size + 3;
     }
     y -= 6;
   };
 
-  draw("Rabbit-Technik – Auftragsbestätigung / Annahme", 16, true);
-  y -= 4;
-  draw(`Tracking: ${String(row.tracking_code)}`);
-  draw(`Datum: ${new Date().toLocaleString("de-DE")}`);
-  y -= 8;
-  draw("Kundendaten", 12, true);
-  draw(`${String(row.customer_name)}`);
-  if (row.email) draw(String(row.email));
-  if (row.phone) draw(String(row.phone));
-  if (row.address) draw(String(row.address));
-  y -= 8;
-  draw("Gerät", 12, true);
-  draw(`${row.device_type} – ${row.brand ?? ""} ${row.model ?? ""}`.trim());
-  if (row.serial_number) draw(`SN: ${String(row.serial_number)}`);
-  y -= 8;
-  if (row.problem_label) draw(`Anliegen: ${String(row.problem_label)}`);
   if (row.description) drawWrapped("Beschreibung:", String(row.description));
   if (row.accessories) drawWrapped("Zubehör:", String(row.accessories));
   drawWrapped("Vorschäden:", formatVorschaeden(row.pre_damage_notes as string | null));
-  y -= 4;
-  draw("Vorgesehene Leistungen", 12, true);
+
+  sectionTitle("Vorgesehene Leistungen");
   for (const s of services) {
-    draw(`• ${s.name} … ${(s.price_cents / 100).toFixed(2)} €`);
+    line(`• ${s.name} … ${(s.price_cents / 100).toFixed(2)} €`, 10, { dy: 2 });
   }
   y -= 6;
-  draw(`Voraussichtliche Summe: ${(Number(row.total_cents) / 100).toFixed(2)} €`, 11, true);
-  y -= 10;
+  line(`Voraussichtliche Summe: ${(Number(row.total_cents) / 100).toFixed(2)} €`, 12, { bold: true, color: COL.accent, dy: 8 });
+  y -= 6;
+
   if (row.legal_consent_at) {
-    draw(`Einwilligung / Hinweise bestätigt am: ${String(row.legal_consent_at)}`, 9);
-    y -= 6;
+    const consent = formatDeBerlin(String(row.legal_consent_at), { dateStyle: "long", timeStyle: "short" });
+    line(`Hinweise / Einwilligung bestätigt: ${consent}`, 9, { color: COL.muted, dy: 4 });
+    y -= 4;
   }
 
   y -= 8;
-  draw("Kundenunterschrift", 12, true);
+  line("Kundenunterschrift", 11, { bold: true, color: COL.text, dy: 6 });
   y -= 4;
 
   const sigBoxH = 100;
   const sigBoxW = 280;
-  if (y < sigBoxH + 80) {
-    page = pdf.addPage([595, 842]);
-    y = page.getSize().height - 60;
-    draw("Kundenunterschrift (Fortsetzung)", 12, true);
-    y -= 4;
+  if (y < sigBoxH + 100) {
+    page = pdf.addPage([W, H]);
+    y = H - 60;
+    line("Kundenunterschrift (Fortsetzung)", 12, { bold: true, color: COL.accent, dy: 8 });
+    y -= 6;
   }
 
   if (img) {
     try {
-      const embedded =
-        img.kind === "png" ? await pdf.embedPng(img.bytes) : await pdf.embedJpg(img.bytes);
+      const embedded = img.kind === "png" ? await pdf.embedPng(img.bytes) : await pdf.embedJpg(img.bytes);
       const scale = Math.min(sigBoxW / embedded.width, sigBoxH / embedded.height);
       const w = embedded.width * scale;
       const h = embedded.height * scale;
       page.drawRectangle({
-        x: left,
-        y: y - h - 4,
-        width: sigBoxW + 8,
-        height: h + 8,
-        borderColor: rgb(0.4, 0.4, 0.45),
-        borderWidth: 0.5,
+        x: M - 2,
+        y: y - h - 10,
+        width: sigBoxW + 12,
+        height: h + 12,
+        borderColor: COL.sigFrame,
+        borderWidth: 1,
+        color: rgb(0.98, 0.99, 1),
       });
-      page.drawImage(embedded, { x: left + 4, y: y - h, width: w, height: h });
-      y -= h + 24;
+      page.drawImage(embedded, { x: M + 4, y: y - h - 4, width: w, height: h });
+      y -= h + 28;
     } catch {
-      draw("(Unterschrift konnte nicht eingebettet werden.)", 9);
-      y -= line;
+      line("(Unterschrift konnte nicht eingebettet werden.)", 9, { color: COL.muted });
     }
   } else {
-    draw("Keine Unterschrift erfasst.", 9);
-    y -= line;
+    line("Keine Unterschrift erfasst.", 9, { color: COL.muted });
   }
 
-  y -= 8;
-  draw("Dieses Dokument entspricht der Annahme am Service-Terminal.", 8);
+  y -= 6;
+  line("Dieses Dokument entspricht der Annahme am Service-Terminal.", 8, { color: COL.muted, dy: 2 });
 
   const safeTracking = String(row.tracking_code).replace(/[^a-zA-Z0-9_-]/g, "_");
   const pdfDir = acceptanceDir();

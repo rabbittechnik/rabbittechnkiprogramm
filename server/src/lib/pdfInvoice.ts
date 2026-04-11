@@ -5,6 +5,44 @@ import type Database from "better-sqlite3";
 
 import { invoicesDir } from "./dataPaths.js";
 import { PAYMENT_TERMS_HEADLINE_DE, PAYMENT_TERMS_LINES_DE, RABBIT_IBAN_FORMATTED } from "./paymentInfo.js";
+import { formatDeBerlin, formatDeBerlinNow } from "./formatBerlin.js";
+
+const W = 595;
+const H = 842;
+const M = 48;
+const CONTENT_W = W - M * 2;
+
+const COL = {
+  headerBg: rgb(0.04, 0.07, 0.13),
+  headerStripe: rgb(0, 0.83, 1),
+  title: rgb(0.95, 0.97, 1),
+  subtitle: rgb(0.55, 0.65, 0.78),
+  accent: rgb(0, 0.83, 1),
+  lime: rgb(0.22, 0.95, 0.2),
+  text: rgb(0.12, 0.14, 0.18),
+  muted: rgb(0.38, 0.42, 0.48),
+  boxBg: rgb(0.94, 0.97, 1),
+  boxBorder: rgb(0.65, 0.78, 0.92),
+  totalBg: rgb(0.04, 0.08, 0.12),
+};
+
+function wrapLines(text: string, maxChars: number): string[] {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t) return [""];
+  const words = t.split(" ");
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length <= maxChars) cur = next;
+    else {
+      if (cur) lines.push(cur);
+      cur = w.length > maxChars ? w.slice(0, maxChars) : w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [""];
+}
 
 export async function writeInvoicePdf(
   db: Database.Database,
@@ -39,86 +77,146 @@ export async function writeInvoicePdf(
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const page = pdf.addPage([595, 842]);
-  let y = page.getSize().height - 50;
-  const left = 50;
-  const line = 14;
+  const page = pdf.addPage([W, H]);
 
-  const draw = (text: string, size = 11, bold = false) => {
-    page.drawText(text, { x: left, y, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.12) });
-    y -= line;
+  let y = H - 52;
+
+  const line = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; dy?: number } = {}) => {
+    const x = o.x ?? M;
+    const c = o.color ?? COL.text;
+    const f = o.bold ? fontBold : font;
+    page.drawText(text, { x, y, size, font: f, color: c });
+    y -= size + (o.dy ?? 4);
   };
 
-  draw("Rabbit-Technik – Rechnung", 18, true);
-  y -= 6;
-  draw(`Rechnungsnr. ${invoiceNumber}`);
-  draw(`Datum: ${new Date().toLocaleDateString("de-DE")}`);
+  page.drawRectangle({ x: 0, y: H - 100, width: W, height: 100, color: COL.headerBg });
+  page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: COL.headerStripe });
+
+  line("RECHNUNG", 9, { color: COL.subtitle, dy: 6 });
+  y -= 4;
+  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 8 });
+  line(`Nr. ${invoiceNumber}`, 11, { bold: true, color: COL.accent, dy: 6 });
+  line(`Rechnungsdatum (DE): ${formatDeBerlinNow({ dateStyle: "long", timeStyle: "short" })}`, 10, {
+    color: COL.subtitle,
+    dy: 10,
+  });
+  y -= 8;
+
+  const metaLines = [
+    `Kunde: ${String(repair.customer_name)}`,
+    repair.email ? String(repair.email) : "",
+    repair.phone ? String(repair.phone) : "",
+  ].filter(Boolean);
+  const pad = 12;
+  const metaH = pad * 2 + metaLines.length * 14 + 6;
+  page.drawRectangle({
+    x: M - 4,
+    y: y - metaH,
+    width: CONTENT_W + 8,
+    height: metaH,
+    color: COL.boxBg,
+    borderColor: COL.boxBorder,
+    borderWidth: 0.8,
+  });
+  y -= pad;
+  for (const ml of metaLines) {
+    line(ml, 10, { color: COL.text, dy: 3 });
+  }
+  y -= pad + 10;
+
+  const sectionTitle = (t: string) => {
+    line(t.toUpperCase(), 9, { bold: true, color: COL.accent, dy: 6 });
+    y -= 4;
+  };
+
+  sectionTitle("Auftrag / Gerät");
+  line(`Tracking: ${String(repair.tracking_code)}`, 10, { dy: 3 });
+  line(`${repair.device_type} – ${repair.brand ?? ""} ${repair.model ?? ""}`.trim(), 10, { dy: 3 });
   y -= 10;
-  draw(`Kunde: ${String(repair.customer_name)}`, 12, true);
-  if (repair.email) draw(String(repair.email));
-  if (repair.phone) draw(String(repair.phone));
-  y -= 10;
-  draw("Auftrag / Gerät", 12, true);
-  draw(`Tracking: ${String(repair.tracking_code)}`);
-  draw(`${repair.device_type} – ${repair.brand ?? ""} ${repair.model ?? ""}`.trim());
-  y -= 10;
-  draw("Positionen", 12, true);
+
+  sectionTitle("Positionen");
   for (const s of services) {
-    draw(`Leistung: ${s.name} … ${(s.price_cents / 100).toFixed(2)} €`);
+    for (const ln of wrapLines(`Leistung: ${s.name} … ${(s.price_cents / 100).toFixed(2)} €`, 78)) {
+      line(ln, 10, { dy: 2 });
+    }
   }
   for (const p of parts) {
-    draw(`Ersatzteil: ${p.name} … ${(p.sale_cents / 100).toFixed(2)} €`);
+    for (const ln of wrapLines(`Ersatzteil: ${p.name} … ${(p.sale_cents / 100).toFixed(2)} €`, 78)) {
+      line(ln, 10, { dy: 2 });
+    }
   }
   y -= 8;
+
   const total = Number(repair.total_cents);
-  draw(`Gesamt: ${(total / 100).toFixed(2)} €`, 13, true);
-  y -= 20;
-  draw(`Zahlungsstatus: ${String(repair.payment_status)}`);
+  const totalBoxH = 44;
+  page.drawRectangle({
+    x: M - 4,
+    y: y - totalBoxH,
+    width: CONTENT_W + 8,
+    height: totalBoxH,
+    color: COL.totalBg,
+    borderColor: COL.accent,
+    borderWidth: 1,
+  });
+  page.drawText("Gesamtbetrag", { x: M + 8, y: y - 16, size: 9, font, color: COL.subtitle });
+  page.drawText(`${(total / 100).toFixed(2)} €`, {
+    x: M + 8,
+    y: y - 36,
+    size: 20,
+    font: fontBold,
+    color: COL.accent,
+  });
+  y -= totalBoxH + 20;
+
   const dueUntil = repair.payment_due_until != null ? String(repair.payment_due_until) : "";
   const pm = String(repair.payment_method ?? "");
   const ps = String(repair.payment_status);
 
-  y -= 6;
-  draw("Zahlung / Abwicklung", 11, true);
-  y -= 2;
+  line("Zahlung / Abwicklung", 12, { bold: true, color: COL.text, dy: 8 });
+  y -= 4;
+
+  const payChunk = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb> } = {}) => {
+    for (const ln of wrapLines(text, 82)) {
+      line(ln, size, { ...o, dy: 2 });
+    }
+  };
 
   if (pm === "bar" && ps === "bezahlt") {
-    draw("Barzahlung bei Abholung – beglichen.", 10);
+    payChunk("Barzahlung bei Abholung – beglichen.", 10, { color: COL.text });
   } else if (pm === "sumup" && ps === "bezahlt") {
-    draw("EC-/Kreditkarte über SumUp bei Abholung – beglichen.", 10);
+    payChunk("EC-/Kreditkarte über SumUp – beglichen.", 10, { color: COL.text });
     const ppa = repair.payment_paid_at != null ? String(repair.payment_paid_at) : "";
     if (ppa) {
-      draw(
-        `Zahlungseingang: ${new Date(ppa.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
-        10
-      );
+      payChunk(`Zahlungseingang: ${formatDeBerlin(String(ppa), { dateStyle: "long", timeStyle: "short" })}`, 9, {
+        color: COL.muted,
+      });
     }
   } else if (pm === "ueberweisung" && ps === "offen") {
-    draw("Zahlung per Überweisung innerhalb von 7 Tagen.", 10, true);
+    payChunk("Zahlung per Überweisung (vereinbarte Frist).", 10, { bold: true, color: COL.text });
     if (dueUntil) {
-      draw(
-        `Zahlbar bis: ${new Date(dueUntil.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
-        10
-      );
+      payChunk(`Zahlbar bis: ${formatDeBerlin(dueUntil, { dateStyle: "long", timeStyle: "short" })}`, 10, {
+        color: COL.text,
+      });
     }
-    draw(`Konto (IBAN): ${RABBIT_IBAN_FORMATTED}`, 10);
-    draw(`Verwendungszweck (Auftragsnr.): ${String(repair.tracking_code)}`, 10, true);
-    draw(`Rechnungsnr.: ${invoiceNumber}`, 10);
+    payChunk(`Konto (IBAN): ${RABBIT_IBAN_FORMATTED}`, 10, { color: COL.text });
+    payChunk(`Verwendungszweck (Auftrag): ${String(repair.tracking_code)} · Rechnungsnr. ${invoiceNumber}`, 10, {
+      bold: true,
+      color: COL.lime,
+    });
   } else {
-    if (ps === "offen" && dueUntil) {
-      draw(
-        `Fällig am: ${new Date(dueUntil.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })}`,
-        10,
-        true
-      );
-      y -= 4;
+    if (ps === "offen" && pm === "ueberweisung" && dueUntil) {
+      payChunk(`Fälligkeit: ${formatDeBerlin(dueUntil, { dateStyle: "long", timeStyle: "short" })}`, 9, {
+        color: COL.muted,
+      });
     }
-    draw(PAYMENT_TERMS_HEADLINE_DE, 10, true);
-    y -= 2;
-    for (const line of PAYMENT_TERMS_LINES_DE) {
-      draw(line, 9);
+    payChunk(PAYMENT_TERMS_HEADLINE_DE, 10, { bold: true, color: COL.text });
+    for (const t of PAYMENT_TERMS_LINES_DE) {
+      payChunk(t, 9, { color: COL.muted });
     }
   }
+
+  y = Math.max(M + 20, y - 6);
+  line("Rabbit-Technik · Werkstatt", 8, { color: COL.muted, dy: 2 });
 
   const pdfDir = invoicesDir();
   const filePath = path.join(pdfDir, `${invoiceNumber}.pdf`);

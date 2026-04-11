@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { RtShell } from "../components/RtShell";
 import { fetchWorkshop, fetchWorkshopBlob } from "../api";
+import { formatDeBerlin } from "../lib/formatBerlin";
 import { useWorkshopGate } from "../useWorkshopGate";
 
 type Customer = {
@@ -253,7 +254,7 @@ export function KundenPage() {
                     <td className="hidden sm:table-cell text-zinc-400">{c.email ?? "—"}</td>
                     <td className="hidden md:table-cell text-zinc-400">{c.phone ?? "—"}</td>
                     <td className="hidden lg:table-cell text-zinc-500 text-xs">
-                      {new Date(c.created_at).toLocaleString("de-DE")}
+                      {formatDeBerlin(c.created_at)}
                     </td>
                   </tr>
                 ))}
@@ -289,7 +290,7 @@ export function KundenPage() {
                           <td className="font-mono text-[#00d4ff]">{r.tracking_code}</td>
                           <td className="text-zinc-300">{r.status.replace(/_/g, " ")}</td>
                           <td className="hidden sm:table-cell text-zinc-500 text-xs">
-                            {new Date(r.created_at).toLocaleString("de-DE")}
+                            {formatDeBerlin(r.created_at)}
                           </td>
                           <td className="text-zinc-300">{(r.total_cents / 100).toFixed(2)} €</td>
                           <td>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { fetchJson } from "../api";
+import { formatDeBerlin } from "../lib/formatBerlin";
 import { PublicTrackShell } from "../components/PublicTrackShell";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -265,11 +266,11 @@ export function TrackPage() {
               <div className="rounded-2xl border border-white/10 bg-[#0a1220]/90 p-4">
                 <p className="text-zinc-500 text-xs uppercase tracking-wide mb-1">Bearbeitungszeit bisher</p>
                 <p className="text-white text-lg font-mono">{formatElapsedSince(data.tracking.created_at)}</p>
-                <p className="text-zinc-600 text-xs mt-2">Seit Auftrag vom {new Date(data.tracking.created_at).toLocaleString("de-DE")}</p>
+                <p className="text-zinc-600 text-xs mt-2">Seit Auftrag vom {formatDeBerlin(data.tracking.created_at)}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-[#0a1220]/90 p-4">
                 <p className="text-zinc-500 text-xs uppercase tracking-wide mb-1">Letzte Aktualisierung</p>
-                <p className="text-white text-sm">{new Date(data.tracking.updated_at).toLocaleString("de-DE")}</p>
+                <p className="text-white text-sm">{formatDeBerlin(data.tracking.updated_at)}</p>
               </div>
             </div>
 
@@ -283,10 +284,7 @@ export function TrackPage() {
                     ✅ Bezahlt (SumUp)
                     {data.tracking.payment_paid_at && (
                       <span className="block text-zinc-400 text-xs font-normal mt-0.5">
-                        {new Date(data.tracking.payment_paid_at.replace(" ", "T")).toLocaleString("de-DE", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })}
+                        {formatDeBerlin(data.tracking.payment_paid_at, { dateStyle: "medium", timeStyle: "short" })}
                       </span>
                     )}
                   </p>
@@ -326,7 +324,6 @@ export function TrackPage() {
 
             {(data.tracking.status === "fertig" || data.tracking.status === "abgeholt") &&
               data.tracking.payment_status === "offen" &&
-              data.payment_due_until &&
               !sumupWarte && (
                 <div className="rounded-2xl border border-amber-500/40 bg-[#0a1220]/95 p-5 space-y-3">
                   <h2 className="text-sm font-bold text-amber-200 uppercase tracking-wider">Zahlung</h2>
@@ -335,34 +332,47 @@ export function TrackPage() {
                       Rechnungsnr. <span className="font-mono text-[#00d4ff]">{data.invoice_number}</span>
                     </p>
                   )}
-                  <p className="text-sm text-zinc-300">
-                    Bitte begleichen Sie den Betrag innerhalb von <strong className="text-white">7 Tagen</strong>.{" "}
-                    {data.payment_bucket === "offen_ueberfaellig" ? (
-                      <span className="text-red-400">Die Zahlungsfrist ist überschritten – bitte umgehend begleichen oder Rücksprache.</span>
-                    ) : (
-                      <span>
-                        Fällig bis:{" "}
-                        <strong className="text-white">
-                          {new Date(data.payment_due_until.replace(" ", "T")).toLocaleString("de-DE", {
-                            dateStyle: "long",
-                            timeStyle: "short",
-                          })}
-                        </strong>
-                      </span>
-                    )}
-                  </p>
+                  {data.tracking.payment_method === "ueberweisung" ? (
+                    <p className="text-sm text-zinc-300">
+                      Bitte begleichen Sie den Betrag innerhalb von <strong className="text-white">7 Tagen</strong>
+                      {data.payment_due_until ? (
+                        <>
+                          .{" "}
+                          {data.payment_bucket === "offen_ueberfaellig" ? (
+                            <span className="text-red-400">
+                              Die Zahlungsfrist ist überschritten – bitte umgehend begleichen oder Rücksprache.
+                            </span>
+                          ) : (
+                            <span>
+                              Fällig bis:{" "}
+                              <strong className="text-white">
+                                {formatDeBerlin(data.payment_due_until, { dateStyle: "long", timeStyle: "short" })}
+                              </strong>
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <> (Fälligkeitsdatum folgt auf der Rechnung / in der Werkstatt).</>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-zinc-300 leading-relaxed">
+                      Der offene Betrag wird bei <strong className="text-white">Abholung</strong> in der Werkstatt beglichen
+                      – in der Regel bar, per Karte (SumUp) oder nach vorheriger Absprache per Überweisung. Es gilt keine
+                      pauschale 7-Tage-Überweisungsfrist, sofern nichts anderes mit uns vereinbart wurde.
+                    </p>
+                  )}
                   {data.tracking.payment_method === "ueberweisung" ? (
                     <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2 text-sm text-zinc-300">
                       <p className="text-xs font-semibold text-amber-100/90 uppercase tracking-wide">Überweisung</p>
+                      {data.payment_due_until && (
                       <p>
                         <span className="text-zinc-500">Zahlbar bis:</span>{" "}
                         <strong className="text-white font-mono">
-                          {new Date(data.payment_due_until.replace(" ", "T")).toLocaleString("de-DE", {
-                            dateStyle: "long",
-                            timeStyle: "short",
-                          })}
+                          {formatDeBerlin(data.payment_due_until, { dateStyle: "long", timeStyle: "short" })}
                         </strong>
                       </p>
+                      )}
                       <p>
                         <span className="text-zinc-500">Konto (IBAN):</span>{" "}
                         <span className="font-mono text-[#39ff14]">DE52 6415 0020 0004 5430 75</span>
@@ -412,7 +422,7 @@ export function TrackPage() {
                   </>
                 ) : (
                   <p className="text-zinc-300 text-sm">
-                    Abholung erledigt am {new Date(data.tracking.updated_at).toLocaleString("de-DE")} (letzte Statusänderung).
+                    Abholung erledigt am {formatDeBerlin(data.tracking.updated_at)} (letzte Statusänderung).
                   </p>
                 )}
               </div>

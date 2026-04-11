@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchWorkshop } from "../api";
+import { formatDeBerlinDateOnly } from "../lib/formatBerlin";
 import { RtShell } from "../components/RtShell";
 import { useWorkshopGate } from "../useWorkshopGate";
 
@@ -69,10 +70,11 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     { value: "eingebaut", label: "Eingebaut" },
   ];
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<Row[] | undefined> => {
     try {
       const data = await fetchWorkshop<Row[]>("/api/repairs");
       setRows(data);
+      return data;
     } catch (e) {
       const err = e as Error & { code?: string };
       if (err.code === "WORKSHOP_AUTH" || err.message === "Anmeldung erforderlich") {
@@ -80,6 +82,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       } else {
         console.error(e);
       }
+      return undefined;
     }
   }, [logout]);
 
@@ -103,8 +106,11 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
 
   const setStatus = async (id: string, status: string) => {
     await fetchWorkshop(`/api/repairs/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
-    await refresh();
-    if (selected?.id === id) setSelected((prev) => (prev ? { ...prev, status } : null));
+    const list = await refresh();
+    if (selected?.id === id && list) {
+      const row = list.find((r) => r.id === id);
+      if (row) setSelected(row);
+    }
   };
 
   const addPart = async () => {
@@ -333,7 +339,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                     <span className="text-amber-300/90">offen</span>
                   )}
                   {(r.status === "fertig" || r.status === "abgeholt") && r.payment_status === "offen" && r.payment_due_at && (
-                    <span className="text-zinc-600"> · bis {new Date(r.payment_due_at.replace(" ", "T")).toLocaleDateString("de-DE")}</span>
+                    <span className="text-zinc-600"> · bis {formatDeBerlinDateOnly(r.payment_due_at)}</span>
                   )}
                   {r.payment_method && (r.status === "fertig" || r.status === "abgeholt") && (
                     <span className="text-zinc-600">
@@ -357,7 +363,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
 
         <section className="rt-panel rt-panel-violet min-h-[320px]">
           {!selected && <p className="text-zinc-500">Auftrag in der Liste wählen.</p>}
-          {selected && detail && (
+          {selected && (
             <div className="space-y-5">
               <div className="flex flex-wrap justify-between gap-2 items-start">
                 <h2 className="font-display font-bold text-lg text-[#00d4ff]">{selected.tracking_code}</h2>
@@ -389,10 +395,10 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
               </div>
               {selected.status === "fertig" && (
                 <div className="rounded-xl border border-[#39ff14]/35 bg-[#39ff14]/5 p-4">
-                  <p className="text-sm font-semibold text-[#39ff14] mb-2">Gerät wird abgeholt</p>
+                  <p className="text-sm font-semibold text-[#39ff14] mb-2">Abholung &amp; Zahlung</p>
                   <p className="text-xs text-zinc-500 mb-3">
-                    Wählen Sie die Zahlungsart – die PDF-Rechnung wird passend erzeugt (Bar/SumUp sofort beglichen,
-                    Überweisung mit Frist und Verwendungszweck = Tracking-Code).
+                    Sobald der Kunde das Gerät abholt: Zahlungsart wählen (Bar, SumUp-Karte oder Überweisung). Die
+                    Rechnung-PDF passt sich automatisch an.
                   </p>
                   <button
                     type="button"
@@ -408,6 +414,11 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   </button>
                 </div>
               )}
+              {!detail && (
+                <p className="text-sm text-zinc-500 border border-white/10 rounded-lg px-3 py-2">Auftragsdetails werden geladen…</p>
+              )}
+              {detail && (
+                <>
               <div>
                 <p className="text-sm font-semibold text-violet-300 mb-2">Ersatzteil hinzufügen</p>
                 <input
@@ -530,6 +541,8 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                     Zur Rechnungsübersicht
                   </Link>
                 </div>
+              )}
+                </>
               )}
             </div>
           )}

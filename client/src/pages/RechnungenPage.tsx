@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchWorkshop } from "../api";
+import { formatDeBerlin } from "../lib/formatBerlin";
 import { RtShell } from "../components/RtShell";
 import { useWorkshopGate } from "../useWorkshopGate";
 
@@ -24,11 +25,7 @@ type InvoiceRow = {
 type Tab = "alle" | "bezahlt" | "offen_frist" | "offen_ueberfaellig";
 
 function formatDue(iso: string): string {
-  try {
-    return new Date(iso.replace(" ", "T")).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
+  return formatDeBerlin(iso, { dateStyle: "medium", timeStyle: "short" });
 }
 
 function euro(cents: number): string {
