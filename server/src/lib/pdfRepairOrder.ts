@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import QRCode from "qrcode";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFPage } from "pdf-lib";
 import type Database from "better-sqlite3";
 import { formatDeBerlin } from "./formatBerlin.js";
 import { statusLabelDe } from "./mail.js";
@@ -104,8 +104,8 @@ export async function writeRepairOrderPdfs(
 
   const qrPng = await loadQrPng(opts.trackingUrl);
 
-  const drawRule = (page: { drawLine: (o: object) => void }, y: number) => {
-    page.drawLine({ start: { x: M, y }, end: { x: M + CONTENT_W, y }, thickness: 0.6, color: COL.rule });
+  const drawRule = (pdfPage: PDFPage, y: number) => {
+    pdfPage.drawLine({ start: { x: M, y }, end: { x: M + CONTENT_W, y }, thickness: 0.6, color: COL.rule });
   };
 
   // ——— A4 ———
