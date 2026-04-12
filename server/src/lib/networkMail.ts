@@ -31,7 +31,13 @@ function loadOrderMailData(db: Database.Database, orderId: string): OrderMailDat
      FROM network_order_items i JOIN network_devices d ON d.id = i.device_id WHERE i.order_id = ?`
   ).all(orderId) as OrderMailData["items"];
 
-  return { ...order, customerEmail: order.customer_email, customerName: order.customer_name, items };
+  return {
+    customerName: order.customer_name,
+    customerEmail: order.customer_email,
+    items,
+    serviceFeeCents: order.service_fee_cents,
+    grandTotalCents: order.grand_total_cents,
+  };
 }
 
 export async function sendNetworkConfirmationEmail(
