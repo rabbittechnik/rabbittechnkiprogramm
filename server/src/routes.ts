@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Express, Response } from "express";
+import type { Express, Request, Response } from "express";
 import { assertBenchStatusAllowed, isBenchRequest } from "./lib/benchRepairGuards.js";
 import { nanoid } from "nanoid";
 import type Database from "better-sqlite3";
