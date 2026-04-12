@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>
+        AVM &middot; assets 
+        Error    </title>
+    <link href="/favicon.ico" type="image/x-icon" rel="icon"/><link href="/favicon.ico" type="image/x-icon" rel="shortcut icon"/>
+            <link rel="stylesheet" href="/css/default.css"/>
+            
+    <link rel="apple-touch-icon-precomposed" href="https://assets.avm.de/apple-touch-icon-precomposed.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="72x72" href="https://assets.avm.de/apple-touch-icon-72x72-precomposed.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="76x76" href="https://assets.avm.de/apple-touch-icon-76x76-precomposed.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="114x114" href="https://assets.avm.de/apple-touch-icon-114x114-precomposed.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="120x120" href="https://assets.avm.de/apple-touch-icon-120x120-precomposed.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="144x144" href="https://assets.avm.de/apple-touch-icon-144x144-precomposed.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="https://assets.avm.de/apple-touch-icon-152x152-precomposed.png" />
+</head>
+<body>
+    <nav id="header">
+        <div class="inner-wrapper">
+            <div id="logo">
+                <a href="http://avm.de" title="Zur Startseite"><img src="/img/logo.png" width="62" height="36" alt="AVM Logo"/></a>            </div>
+        </div>
+    </nav>
+        <section class="container clearfix">
+        <div class="inner-wrapper">
+            <h2>Not Found</h2>
+<p class="error">
+    <strong>Fehler: </strong>
+    Die gesuchte Adresse <br /><br /><code>/files/images/fritzbox/fritzbox-4060.png</code><br /><br /> wurde nicht gefunden.    <br /><br />
+    <a href="https://avm.de" title="Zur AVM-Startseite">Zur AVM-Startseite &gt;</a>
+</p>
+        </div>
+    </section>
+    <footer>
+    </footer>
+</body>
+</html>
