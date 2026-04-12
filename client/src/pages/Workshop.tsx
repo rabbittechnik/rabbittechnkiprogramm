@@ -12,7 +12,9 @@ import {
   observeRepairListForNewNotifications,
   primeRepairNotificationAudio,
   useNewRepairNotification,
+  useNewRepairParty,
 } from "../hooks/useNewRepairNotification";
+import { NewRepairPartyOverlay } from "../components/NewRepairPartyOverlay";
 
 type Row = {
   id: string;
@@ -90,7 +92,7 @@ function workshopListRows(data: Row[]): Row[] {
 }
 
 /** Rahmenfarbe nach Status: neu rot, Diagnose blau, in Reparatur türkis, Teile gelb, fertig grün. */
-function workshopListRowClass(status: string, isSelected: boolean): string {
+function workshopListRowClass(status: string, isSelected: boolean, partyHighlight?: boolean): string {
   const byStatus: Record<string, string> = {
     angenommen: "border-red-500/90 bg-red-950/35 hover:border-red-400",
     diagnose: "border-blue-500/90 bg-blue-950/30 hover:border-blue-400",
@@ -103,7 +105,8 @@ function workshopListRowClass(status: string, isSelected: boolean): string {
   const selectedRing = isSelected
     ? " ring-2 ring-[#39ff14] ring-offset-2 ring-offset-[#060b13] shadow-[0_0_22px_rgba(57,255,20,0.22)]"
     : "";
-  return `border-2 ${base}${selectedRing}`;
+  const party = partyHighlight ? " animate-rt-party-row" : "";
+  return `border-2 ${base}${selectedRing}${party}`;
 }
 
 export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: string }) {
@@ -168,6 +171,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   }, [gate, refresh]);
 
   useNewRepairNotification({ gate, refresh });
+  const { highlightIds, partyActive } = useNewRepairParty();
 
   const openRepairByTrackingCode = useCallback(
     async (raw: string): Promise<boolean> => {
@@ -533,6 +537,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
         </div>
       }
     >
+      <NewRepairPartyOverlay active={partyActive} />
       <div className="grid lg:grid-cols-2 gap-6">
         <section className="rt-panel rt-panel-cyan min-h-[200px]">
           <h2 className="text-sm font-bold text-white mb-3 tracking-wide">Auftragsliste</h2>
@@ -564,7 +569,11 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 key={r.id}
                 type="button"
                 onClick={() => setSelected(r)}
-                className={`w-full text-left rounded-xl px-4 py-3 transition-all ${workshopListRowClass(r.status, selected?.id === r.id)}`}
+                className={`w-full text-left rounded-xl px-4 py-3 transition-all ${workshopListRowClass(
+                  r.status,
+                  selected?.id === r.id,
+                  highlightIds.has(r.id)
+                )}`}
               >
                 <div className="flex justify-between gap-2">
                   <span className="font-mono text-[#00d4ff]">

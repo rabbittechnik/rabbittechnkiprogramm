@@ -240,6 +240,96 @@ a:not([class]),
   outline: none;
 }
 
+/* Neuer Auftrag: Party-Overlay (Werkstatt) */
+@keyframes rt-party-vignette {
+  0%,
+  100% {
+    opacity: 0.5;
+    filter: saturate(1.05);
+  }
+  50% {
+    opacity: 0.92;
+    filter: saturate(1.4) hue-rotate(28deg);
+  }
+}
+.animate-rt-party-vignette {
+  animation: rt-party-vignette 1.35s ease-in-out infinite;
+}
+
+@keyframes rt-party-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-rt-party-spin {
+  animation: rt-party-spin 6s linear infinite;
+}
+
+@keyframes rt-party-strobe {
+  0%,
+  100% {
+    background-color: rgba(255, 255, 255, 0);
+  }
+  50% {
+    background-color: rgba(255, 255, 255, 0.055);
+  }
+}
+.animate-rt-party-strobe {
+  animation: rt-party-strobe 0.42s ease-in-out infinite;
+}
+
+@keyframes rt-party-sparkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.55);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+.animate-rt-party-sparkle {
+  animation: rt-party-sparkle 1.05s ease-in-out infinite;
+}
+
+@keyframes rt-party-row {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 3px rgba(57, 255, 20, 0.85),
+      0 0 28px rgba(0, 212, 255, 0.45);
+    filter: brightness(1.05);
+  }
+  33% {
+    box-shadow:
+      0 0 0 4px rgba(250, 204, 21, 0.95),
+      0 0 36px rgba(236, 72, 153, 0.5);
+    filter: brightness(1.12) hue-rotate(-12deg);
+  }
+  66% {
+    box-shadow:
+      0 0 0 3px rgba(168, 85, 247, 0.9),
+      0 0 32px rgba(34, 211, 238, 0.45);
+    filter: brightness(1.08) hue-rotate(18deg);
+  }
+}
+.animate-rt-party-row {
+  animation: rt-party-row 0.55s ease-in-out infinite;
+  z-index: 15;
+  position: relative;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rt-party-vignette,
+  .animate-rt-party-spin,
+  .animate-rt-party-strobe,
+  .animate-rt-party-sparkle,
+  .animate-rt-party-row {
+    animation: none !important;
+  }
+}
+
 @media (pointer: coarse) {
   /* Touch-Geräte: größere Treffflächen */
   button, [role="button"] {

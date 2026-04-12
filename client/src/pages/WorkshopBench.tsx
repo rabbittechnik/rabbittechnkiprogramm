@@ -11,7 +11,9 @@ import {
   observeRepairListForNewNotifications,
   primeRepairNotificationAudio,
   useNewRepairNotification,
+  useNewRepairParty,
 } from "../hooks/useNewRepairNotification";
+import { NewRepairPartyOverlay } from "../components/NewRepairPartyOverlay";
 
 type Row = {
   id: string;
@@ -100,6 +102,7 @@ export function WorkshopBench() {
   }, [gate, refresh]);
 
   useNewRepairNotification({ gate, refresh });
+  const { highlightIds, partyActive } = useNewRepairParty();
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -341,6 +344,7 @@ export function WorkshopBench() {
         </div>
       }
     >
+      <NewRepairPartyOverlay active={partyActive} />
       <div className="grid lg:grid-cols-2 gap-6">
         <section className="rt-panel rt-panel-cyan min-h-[200px]">
           <h2 className="text-sm font-bold text-white mb-3 tracking-wide">Offene Aufträge</h2>
@@ -375,6 +379,8 @@ export function WorkshopBench() {
                 type="button"
                 onClick={() => setSelected(r)}
                 className={`w-full text-left rounded-xl border px-4 py-3 transition-all ${
+                  highlightIds.has(r.id) ? "animate-rt-party-row " : ""
+                }${
                   selected?.id === r.id
                     ? "border-[#39ff14]/60 bg-[#39ff14]/10 shadow-[0_0_20px_rgba(57,255,20,0.15)]"
                     : "border-[#00d4ff]/20 bg-[#060b13]/60 hover:border-[#00d4ff]/40"
