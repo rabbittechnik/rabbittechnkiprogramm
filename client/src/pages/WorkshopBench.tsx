@@ -4,8 +4,14 @@ import { fetchWorkshop } from "../api";
 import { formatDeBerlin } from "../lib/formatBerlin";
 import { parseScanToTrackingCode } from "../lib/trackingScan";
 import { RtShell } from "../components/RtShell";
+import { RepairSoundEnableButton } from "../components/RepairSoundEnableButton";
 import { useBenchGate } from "../useBenchGate";
 import { getWorkshopTokenRole } from "../workshopAuth";
+import {
+  observeRepairListForNewNotifications,
+  primeRepairNotificationAudio,
+  useNewRepairNotification,
+} from "../hooks/useNewRepairNotification";
 
 type Row = {
   id: string;
@@ -81,6 +87,7 @@ export function WorkshopBench() {
     try {
       const data = await fetchWorkshop<Row[]>("/api/repairs");
       setRows(data);
+      observeRepairListForNewNotifications(data);
       return data;
     } catch (e) {
       console.error(e);
@@ -91,6 +98,8 @@ export function WorkshopBench() {
   useEffect(() => {
     if (gate === "ok") void refresh();
   }, [gate, refresh]);
+
+  useNewRepairNotification({ gate, refresh });
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -287,7 +296,13 @@ export function WorkshopBench() {
     return (
       <RtShell title="Montage-Tablet" subtitle="Anmeldung">
         <div className="max-w-md mx-auto rt-panel rt-panel-cyan">
-          <form onSubmit={(e) => void tryLogin(e)} className="space-y-4">
+          <form
+            onSubmit={(e) => {
+              primeRepairNotificationAudio();
+              void tryLogin(e);
+            }}
+            className="space-y-4"
+          >
             <p className="text-sm text-zinc-400">
               Passwort für das zweite Tablet (Umgebungsvariable <span className="font-mono">RABBIT_BENCH_PASSWORD</span>).
               Keine Preise oder Buchhaltung.
@@ -318,9 +333,12 @@ export function WorkshopBench() {
       title="Montage-Tablet"
       subtitle="Offene Aufträge · ohne Preise"
       actions={
-        <button type="button" onClick={logout} className="text-xs text-zinc-500 hover:text-zinc-300 px-2">
-          Abmelden
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <RepairSoundEnableButton />
+          <button type="button" onClick={logout} className="text-xs text-zinc-500 hover:text-zinc-300 px-2">
+            Abmelden
+          </button>
+        </div>
       }
     >
       <div className="grid lg:grid-cols-2 gap-6">

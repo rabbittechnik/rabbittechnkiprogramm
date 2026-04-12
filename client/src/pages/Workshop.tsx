@@ -5,8 +5,14 @@ import { formatDeBerlin, formatDeBerlinDateOnly } from "../lib/formatBerlin";
 import { parseScanToTrackingCode } from "../lib/trackingScan";
 import { RtShell } from "../components/RtShell";
 import { TapToPayPhoneAnimation } from "../components/TapToPayPhoneAnimation";
+import { RepairSoundEnableButton } from "../components/RepairSoundEnableButton";
 import { useWorkshopGate } from "../useWorkshopGate";
 import { getWorkshopTokenRole } from "../workshopAuth";
+import {
+  observeRepairListForNewNotifications,
+  primeRepairNotificationAudio,
+  useNewRepairNotification,
+} from "../hooks/useNewRepairNotification";
 
 type Row = {
   id: string;
@@ -144,6 +150,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       const data = await fetchWorkshop<Row[]>("/api/repairs");
       const next = workshopListRows(data);
       setRows(next);
+      observeRepairListForNewNotifications(next);
       return next;
     } catch (e) {
       const err = e as Error & { code?: string };
@@ -159,6 +166,8 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   useEffect(() => {
     if (gate === "ok") void refresh();
   }, [gate, refresh]);
+
+  useNewRepairNotification({ gate, refresh });
 
   const openRepairByTrackingCode = useCallback(
     async (raw: string): Promise<boolean> => {
@@ -326,6 +335,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     const list = await fetchWorkshop<Row[]>("/api/repairs");
     const visible = workshopListRows(list);
     setRows(visible);
+    observeRepairListForNewNotifications(visible);
     const next = visible.find((x) => x.id === repairId);
     if (next) {
       setSelected(next);
@@ -422,6 +432,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
           const list = await fetchWorkshop<Row[]>("/api/repairs");
           const visible = workshopListRows(list);
           setRows(visible);
+          observeRepairListForNewNotifications(visible);
           const next = visible.find((x) => x.id === repairId);
           if (next) {
             setSelected(next);
@@ -480,7 +491,13 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     return (
       <RtShell title={pageTitle} subtitle="Anmeldung erforderlich">
         <div className="max-w-md mx-auto rt-panel rt-panel-cyan">
-          <form onSubmit={(e) => void tryLogin(e)} className="space-y-4">
+          <form
+            onSubmit={(e) => {
+              primeRepairNotificationAudio();
+              void tryLogin(e);
+            }}
+            className="space-y-4"
+          >
             <p className="text-sm text-zinc-400">Bitte mit dem Werkstatt-Passwort anmelden (Umgebungsvariable RABBIT_WORKSHOP_PASSWORD).</p>
             <div>
               <label className="rt-label-neon">Passwort</label>
@@ -508,9 +525,12 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       title={pageTitle}
       subtitle="Aufträge & Teile"
       actions={
-        <button type="button" onClick={logout} className="text-xs text-zinc-500 hover:text-zinc-300 px-2">
-          Abmelden
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <RepairSoundEnableButton />
+          <button type="button" onClick={logout} className="text-xs text-zinc-500 hover:text-zinc-300 px-2">
+            Abmelden
+          </button>
+        </div>
       }
     >
       <div className="grid lg:grid-cols-2 gap-6">

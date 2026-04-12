@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import type { PDFFont, PDFPage } from "pdf-lib";
 import type Database from "better-sqlite3";
 
 import { invoicesDir } from "./dataPaths.js";
@@ -43,6 +44,75 @@ function wrapLines(text: string, maxChars: number): string[] {
   }
   if (cur) lines.push(cur);
   return lines.length ? lines : [""];
+}
+
+/** Word-wrap to a maximum rendered width (Helvetica-like proportional spacing). */
+function wrapLinesMaxWidth(text: string, maxWidth: number, f: PDFFont, size: number): string[] {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t) return [""];
+  const words = t.split(" ");
+  const lines: string[] = [];
+  let cur = "";
+  const fits = (s: string) => f.widthOfTextAtSize(s, size) <= maxWidth;
+
+  const pushLongToken = (token: string) => {
+    let chunk = "";
+    for (const ch of token) {
+      const next = chunk + ch;
+      if (fits(next)) chunk = next;
+      else {
+        if (chunk) lines.push(chunk);
+        chunk = ch;
+      }
+    }
+    if (chunk) lines.push(chunk);
+  };
+
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (fits(next)) cur = next;
+    else {
+      if (cur) lines.push(cur);
+      if (fits(w)) cur = w;
+      else {
+        pushLongToken(w);
+        cur = "";
+      }
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [""];
+}
+
+function drawDotLeader(
+  page: PDFPage,
+  yBaseline: number,
+  xStart: number,
+  xEnd: number,
+  f: PDFFont,
+  size: number,
+  color: ReturnType<typeof rgb>
+) {
+  const dot = "·";
+  const dotW = f.widthOfTextAtSize(dot, size);
+  if (xEnd <= xStart || dotW <= 0) return;
+  let x = xStart;
+  while (x + dotW <= xEnd) {
+    page.drawText(dot, { x, y: yBaseline, size, font: f, color });
+    x += dotW * 1.15;
+  }
+}
+
+function drawHLine(page: PDFPage, x0: number, x1: number, yCenter: number, thickness: number, color: ReturnType<typeof rgb>) {
+  const w = Math.max(0, x1 - x0);
+  if (w <= 0) return;
+  page.drawRectangle({
+    x: x0,
+    y: yCenter - thickness / 2,
+    width: w,
+    height: thickness,
+    color,
+  });
 }
 
 export async function writeInvoicePdf(
@@ -93,6 +163,7 @@ export async function writeInvoicePdf(
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   let page = pdf.addPage([W, H]);
+  let y = H - HEADER_H - 28;
 
   const line = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; dy?: number } = {}) => {
     const x = o.x ?? M;
@@ -102,12 +173,19 @@ export async function writeInvoicePdf(
     y -= size + (o.dy ?? 4);
   };
 
+  const ensureBodySpace = (minYFromBottom: number) => {
+    if (y >= minYFromBottom) return;
+    page = pdf.addPage([W, H]);
+    y = H - M;
+  };
+
   const isTest = Number(repair.is_test) === 1;
+  const dateStr = formatDeBerlinNow({ dateStyle: "long", timeStyle: "short" });
+  const dateLine = `Rechnungsdatum (DE): ${dateStr}`;
 
   page.drawRectangle({ x: 0, y: H - HEADER_H, width: W, height: HEADER_H, color: COL.headerBg });
   page.drawRectangle({ x: 0, y: H - 5, width: W, height: 5, color: isTest ? rgb(1, 0.3, 0.2) : COL.headerStripe });
 
-  let y = H - (isTest ? 54 : 38);
   if (isTest) {
     page.drawText("TESTRECHNUNG – KEIN ZAHLUNGSBELEG", {
       x: M,
@@ -118,23 +196,51 @@ export async function writeInvoicePdf(
     });
   }
 
-  line(isTest ? "TESTRECHNUNG" : "RECHNUNG", 9, { color: COL.subtitle, dy: 5 });
-  y -= 2;
-  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 7 });
-  line(`Nr. ${invoiceNumber}`, 11, { bold: true, color: COL.accent, dy: 5 });
-
-  y = H - HEADER_H - 22;
-  line(`Rechnungsdatum (DE): ${formatDeBerlinNow({ dateStyle: "long", timeStyle: "short" })}`, 10, {
-    color: COL.text,
-    dy: 6,
+  const yDocLabel = H - (isTest ? 56 : 42);
+  const yBrand = H - (isTest ? 78 : 64);
+  page.drawText(isTest ? "TESTRECHNUNG" : "RECHNUNG", {
+    x: M,
+    y: yDocLabel,
+    size: 9,
+    font,
+    color: COL.subtitle,
   });
-  y -= 10;
+  page.drawText("Rabbit-Technik", {
+    x: M,
+    y: yBrand,
+    size: 22,
+    font: fontBold,
+    color: COL.title,
+  });
 
-  const metaLines = [
-    `Kunde: ${String(repair.customer_name)}`,
-    repair.email ? String(repair.email) : "",
-    repair.phone ? String(repair.phone) : "",
-  ].filter(Boolean);
+  const invLine = `Nr. ${invoiceNumber}`;
+  const invSize = 11;
+  page.drawText(invLine, {
+    x: W - M - fontBold.widthOfTextAtSize(invLine, invSize),
+    y: H - (isTest ? 54 : 42),
+    size: invSize,
+    font: fontBold,
+    color: COL.accent,
+  });
+  const dateSize = 9;
+  page.drawText(dateLine, {
+    x: W - M - font.widthOfTextAtSize(dateLine, dateSize),
+    y: H - (isTest ? 70 : 58),
+    size: dateSize,
+    font,
+    color: COL.subtitle,
+  });
+
+  const metaLines: string[] = [`Kunde: ${String(repair.customer_name)}`];
+  if (repair.address) {
+    const rawAddr = String(repair.address).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    for (const al of rawAddr.split("\n")) {
+      const t = al.trim();
+      if (t) metaLines.push(t);
+    }
+  }
+  if (repair.email) metaLines.push(String(repair.email));
+  if (repair.phone) metaLines.push(String(repair.phone));
   const pad = 12;
   const metaH = pad * 2 + metaLines.length * 14 + 6;
   page.drawRectangle({
@@ -162,24 +268,80 @@ export async function writeInvoicePdf(
   line(`${repair.device_type} – ${repair.brand ?? ""} ${repair.model ?? ""}`.trim(), 10, { dy: 3 });
   y -= 10;
 
-  sectionTitle("Positionen");
-  for (const s of services) {
-    for (const ln of wrapLines(`Leistung: ${s.name} … ${(s.price_cents / 100).toFixed(2)} €`, 78)) {
-      line(ln, 10, { dy: 2 });
-    }
-  }
-  for (const p of parts) {
-    for (const ln of wrapLines(`Ersatzteil: ${p.name} … ${(p.sale_cents / 100).toFixed(2)} €`, 78)) {
-      line(ln, 10, { dy: 2 });
-    }
-  }
-  y -= 8;
+  const X_RIGHT = W - M;
+  const DESC_PRICE_GAP = 12;
+  const itemRowSize = 10;
+  const itemRowDy = 3;
 
-  const ensureBodySpace = (minYFromBottom: number) => {
-    if (y >= minYFromBottom) return;
-    page = pdf.addPage([W, H]);
-    y = H - M;
+  const drawDescriptionPriceRows = (description: string, priceCents: number) => {
+    const priceLabel = `${(priceCents / 100).toFixed(2)} €`;
+    const priceW = fontBold.widthOfTextAtSize(priceLabel, itemRowSize);
+    const xPrice = X_RIGHT - priceW;
+    const descMaxW = Math.max(80, xPrice - M - DESC_PRICE_GAP);
+    const descLines = wrapLinesMaxWidth(description, descMaxW, font, itemRowSize);
+    const lineStep = itemRowSize + itemRowDy;
+    for (let i = 0; i < descLines.length; i++) {
+      ensureBodySpace(M + lineStep + 48);
+      const last = i === descLines.length - 1;
+      const yy = y;
+      page.drawText(descLines[i], { x: M, y: yy, size: itemRowSize, font, color: COL.text });
+      if (last) {
+        const textW = font.widthOfTextAtSize(descLines[i], itemRowSize);
+        drawDotLeader(page, yy, M + textW + 4, xPrice - 3, font, 5.5, COL.muted);
+        page.drawText(priceLabel, {
+          x: xPrice,
+          y: yy,
+          size: itemRowSize,
+          font: fontBold,
+          color: COL.text,
+        });
+      }
+      y -= lineStep;
+    }
+    y -= 2;
   };
+
+  const drawPositionsSubheading = (label: string) => {
+    ensureBodySpace(M + 36);
+    page.drawText(label, { x: M, y, size: 9, font: fontBold, color: COL.muted });
+    y -= 9 + 2;
+    drawHLine(page, M, X_RIGHT, y + 6, 0.45, COL.boxBorder);
+    y -= 6;
+  };
+
+  sectionTitle("Positionen");
+  ensureBodySpace(M + 72);
+  const thSize = 8;
+  const betragLbl = "Betrag";
+  page.drawText("Beschreibung", { x: M, y, size: thSize, font: fontBold, color: COL.muted });
+  page.drawText(betragLbl, {
+    x: X_RIGHT - fontBold.widthOfTextAtSize(betragLbl, thSize),
+    y,
+    size: thSize,
+    font: fontBold,
+    color: COL.muted,
+  });
+  y -= thSize + 2;
+  drawHLine(page, M, X_RIGHT, y + 4, 0.6, COL.accent);
+  y -= 10;
+
+  if (services.length > 0) {
+    drawPositionsSubheading("Leistungen");
+    for (const s of services) {
+      drawDescriptionPriceRows(s.name, s.price_cents);
+    }
+  }
+  if (parts.length > 0) {
+    drawPositionsSubheading("Ersatzteile / Material");
+    for (const p of parts) {
+      drawDescriptionPriceRows(p.name, p.sale_cents);
+    }
+  }
+  if (services.length === 0 && parts.length === 0) {
+    ensureBodySpace(M + 24);
+    line("— keine Positionen erfasst —", 9, { color: COL.muted, dy: 3 });
+  }
+  y -= 6;
 
   if (repairLogs.length > 0) {
     ensureBodySpace(M + 100);
@@ -201,6 +363,7 @@ export async function writeInvoicePdf(
 
   const total = Number(repair.total_cents);
   const totalBoxH = 44;
+  ensureBodySpace(M + totalBoxH + 140);
   page.drawRectangle({
     x: M - 4,
     y: y - totalBoxH,
@@ -210,11 +373,15 @@ export async function writeInvoicePdf(
     borderColor: COL.accent,
     borderWidth: 1,
   });
+  const totalStr = `${(total / 100).toFixed(2)} €`;
+  const totalAmtSize = 20;
+  const totalAmtW = fontBold.widthOfTextAtSize(totalStr, totalAmtSize);
+  const xTotalAmt = X_RIGHT - totalAmtW;
   page.drawText("Gesamtbetrag", { x: M + 8, y: y - 16, size: 9, font, color: COL.subtitle });
-  page.drawText(`${(total / 100).toFixed(2)} €`, {
-    x: M + 8,
+  page.drawText(totalStr, {
+    x: xTotalAmt,
     y: y - 36,
-    size: 20,
+    size: totalAmtSize,
     font: fontBold,
     color: COL.accent,
   });
