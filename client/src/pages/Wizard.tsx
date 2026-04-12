@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { fetchJson, fetchWorkshop } from "../api";
+import { SignatureCanvas, type SignatureCanvasRef } from "../components/SignatureCanvas";
 
 const DEVICE_TYPES = ["Laptop", "PC", "Smartphone", "Tablet", "Konsole", "Sonstiges"];
 
@@ -82,9 +83,7 @@ export function Wizard() {
     confirmationEmailSkipped?: boolean;
   } | null>(null);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const drawing = useRef(false);
-  const lastPoint = useRef<{ x: number; y: number } | null>(null);
+  const sigRef = useRef<SignatureCanvasRef>(null);
 
   useEffect(() => {
     fetchJson<Problem[]>("/api/problems").then(setProblems).catch(console.error);
@@ -234,59 +233,8 @@ export function Wizard() {
     );
   };
 
-  const canvasPos = (e: React.PointerEvent, c: HTMLCanvasElement) => {
-    const r = c.getBoundingClientRect();
-    return {
-      x: ((e.clientX - r.left) / r.width) * c.width,
-      y: ((e.clientY - r.top) / r.height) * c.height,
-    };
-  };
-
-  const startDraw = (e: React.PointerEvent) => {
-    const c = canvasRef.current;
-    if (!c) return;
-    drawing.current = true;
-    c.setPointerCapture(e.pointerId);
-    lastPoint.current = canvasPos(e, c);
-  };
-
-  const draw = (e: React.PointerEvent) => {
-    if (!drawing.current) return;
-    const c = canvasRef.current;
-    if (!c || !lastPoint.current) return;
-    const ctx = c.getContext("2d");
-    if (!ctx) return;
-    const p = canvasPos(e, c);
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
-    ctx.lineTo(p.x, p.y);
-    ctx.stroke();
-    lastPoint.current = p;
-  };
-
-  const endDraw = (e: React.PointerEvent) => {
-    drawing.current = false;
-    lastPoint.current = null;
-    const c = canvasRef.current;
-    if (c?.hasPointerCapture(e.pointerId)) c.releasePointerCapture(e.pointerId);
-  };
-
-  const clearSignature = () => {
-    const c = canvasRef.current;
-    if (!c) return;
-    const ctx = c.getContext("2d");
-    if (!ctx) return;
-    ctx.fillStyle = "#060b13";
-    ctx.fillRect(0, 0, c.width, c.height);
-  };
-
   const submit = async () => {
-    const c = canvasRef.current;
-    const signature_data_url = c ? c.toDataURL("image/png") : "";
+    const signature_data_url = sigRef.current?.toDataURL() ?? "";
     if (!selectedCustomerId && !customerName.trim()) {
       alert("Bitte Kundenname eingeben oder einen Kunden aus den Stammdaten wählen.");
       return;
@@ -716,22 +664,8 @@ export function Wizard() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-end">
           <div className="lg:col-span-2 space-y-3">
             <label className="text-xs text-zinc-500">Kundenunterschrift</label>
-            <canvas
-              ref={canvasRef}
-              width={900}
-              height={200}
-              className="w-full max-h-[180px] rounded-xl border border-[#00d4ff]/30 touch-none bg-[#060b13] cursor-crosshair"
-              onPointerDown={startDraw}
-              onPointerMove={draw}
-              onPointerUp={endDraw}
-              onPointerLeave={endDraw}
-            />
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[11px] text-zinc-500">Hiermit akzeptiere ich die Reparaturbedingungen.</p>
-              <button type="button" className="text-xs text-[#00d4ff] underline" onClick={clearSignature}>
-                Unterschrift leeren
-              </button>
-            </div>
+            <SignatureCanvas ref={sigRef} />
+            <p className="text-[11px] text-zinc-500">Hiermit akzeptiere ich die Reparaturbedingungen.</p>
             <label className="flex items-start gap-2 cursor-pointer text-sm text-zinc-400">
               <input type="checkbox" checked={legal} onChange={(e) => setLegal(e.target.checked)} className="mt-1 rounded" />
               DSGVO & Haftungshinweise gelesen und zugestimmt.

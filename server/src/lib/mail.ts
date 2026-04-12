@@ -234,7 +234,7 @@ function htmlFooterRow(): string {
  * Einheitliches Kunden-E-Mail-Layout (dunkel, cyan/lime Akzente, werkstatt-typisch).
  * Inhalt = zusammenhängende &lt;tr&gt;…&lt;/tr&gt;-Zeilen für die innere Tabelle.
  */
-function wrapCustomerEmailHtml(innerRows: string, preheader?: string): string {
+export function wrapCustomerEmailHtml(innerRows: string, preheader?: string): string {
   const pre = preheader ? escapeHtml(preheader.slice(0, 140)) : "";
   return `<!DOCTYPE html>
 <html lang="de">
@@ -381,7 +381,7 @@ async function sendViaResend(opts: {
   return { sent: true };
 }
 
-async function sendSmtp(opts: {
+export async function sendSmtp(opts: {
   to: string;
   subject: string;
   text: string;

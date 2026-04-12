@@ -12,6 +12,7 @@ import { registerRoutes, paramStr } from "./routes.js";
 import { registerErpOverlayRoutes } from "./erp/overlayRoutes.js";
 import { registerDayClosingRoutes } from "./dayClosingRoutes.js";
 import { registerMonthReportRoutes } from "./monthReportRoutes.js";
+import { registerNetworkRoutes } from "./networkRoutes.js";
 import { startDayClosingScheduler } from "./lib/dayClosingScheduler.js";
 import { startDataBackupScheduler } from "./lib/dataBackupScheduler.js";
 import { isAutomaticDataBackupWanted } from "./lib/dataBackup.js";
@@ -61,6 +62,7 @@ registerRoutes(app, db);
 registerErpOverlayRoutes(app, db);
 registerDayClosingRoutes(app, db);
 registerMonthReportRoutes(app, db);
+registerNetworkRoutes(app, db);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {

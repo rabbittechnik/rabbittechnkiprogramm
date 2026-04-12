@@ -104,6 +104,18 @@ const tiles: {
     ),
   },
   {
+    to: "/netzwerk",
+    label: "Netzwerkeinrichtung",
+    glowRgb: "0, 255, 180",
+    border: "border-teal-400/55",
+    iconWrap: "from-teal-400/30 to-emerald-600/5 text-teal-100 shadow-[0_0_22px_rgba(0,255,180,0.38)]",
+    icon: (
+      <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0" />
+      </svg>
+    ),
+  },
+  {
     to: "/werkstatt",
     label: "Auftragsboard",
     glowRgb: "100, 180, 255",

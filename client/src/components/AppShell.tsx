@@ -14,6 +14,8 @@ const NAV_SECTIONS = [
       { to: "/kunden", label: "Kundenverwaltung" },
       { to: "/track", label: "Kunden-Tracking" },
       { to: "/lager", label: "Lager & Teile" },
+      { to: "/netzwerk", label: "Netzwerkeinrichtung" },
+      { to: "/netzwerk-auftraege", label: "Netzwerk-Aufträge" },
     ],
   },
   {
@@ -31,6 +33,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/statistik", label: "Statistik" },
       { to: "/einstellungen", label: "Einstellungen" },
+      { to: "/netzwerk-admin", label: "Netzwerk-Admin" },
     ],
   },
 ];

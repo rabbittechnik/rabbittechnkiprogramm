@@ -166,6 +166,61 @@ CREATE TABLE IF NOT EXISTS monatsberichte (
 );
 
 CREATE INDEX IF NOT EXISTS idx_monatsberichte_ym ON monatsberichte(year_month DESC);
+
+-- Netzwerkeinrichtung: Geraetekatalog
+CREATE TABLE IF NOT EXISTS network_devices (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  brand TEXT NOT NULL DEFAULT 'AVM',
+  model TEXT NOT NULL,
+  connection_type TEXT,
+  wifi_standard TEXT,
+  speed TEXT,
+  mesh_support INTEGER NOT NULL DEFAULT 0,
+  base_price_cents INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'seed',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Netzwerkeinrichtung: Auftraege
+CREATE TABLE IF NOT EXISTS network_orders (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  status TEXT NOT NULL DEFAULT 'bestellt',
+  service_fee_cents INTEGER NOT NULL DEFAULT 0,
+  hardware_total_cents INTEGER NOT NULL DEFAULT 0,
+  grand_total_cents INTEGER NOT NULL DEFAULT 0,
+  signature_data_url TEXT,
+  confirmation_pdf_path TEXT,
+  payment_status TEXT NOT NULL DEFAULT 'offen',
+  payment_method TEXT,
+  payment_paid_at TEXT,
+  payment_due_at TEXT,
+  sumup_checkout_id TEXT,
+  sumup_checkout_url TEXT,
+  sumup_channel TEXT,
+  invoice_number TEXT UNIQUE,
+  invoice_pdf_path TEXT,
+  invoice_pdf_sha256 TEXT,
+  invoice_finalized_at TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Netzwerkeinrichtung: Positionen
+CREATE TABLE IF NOT EXISTS network_order_items (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES network_orders(id) ON DELETE CASCADE,
+  device_id TEXT NOT NULL REFERENCES network_devices(id),
+  quantity INTEGER NOT NULL DEFAULT 1,
+  unit_price_cents INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_network_orders_customer ON network_orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_network_orders_status ON network_orders(status);
+CREATE INDEX IF NOT EXISTS idx_network_order_items_order ON network_order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_repairs_tracking ON repairs(tracking_code);
 CREATE INDEX IF NOT EXISTS idx_repairs_customer ON repairs(customer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_customer ON devices(customer_id);

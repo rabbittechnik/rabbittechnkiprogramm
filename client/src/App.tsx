@@ -22,6 +22,9 @@ const BuchhaltungReportsPage = lazy(() => import("./pages/BuchhaltungReportsPage
 const TagesabschlussPage = lazy(() => import("./pages/TagesabschlussPage").then((m) => ({ default: m.TagesabschlussPage })));
 const MonatsberichtPage = lazy(() => import("./pages/MonatsberichtPage").then((m) => ({ default: m.MonatsberichtPage })));
 const PlaceholderPage = lazy(() => import("./pages/PlaceholderPage").then((m) => ({ default: m.PlaceholderPage })));
+const NetworkWizard = lazy(() => import("./pages/NetworkWizard").then((m) => ({ default: m.NetworkWizard })));
+const NetworkOrdersPage = lazy(() => import("./pages/NetworkOrdersPage").then((m) => ({ default: m.NetworkOrdersPage })));
+const NetworkAdminPage = lazy(() => import("./pages/NetworkAdminPage").then((m) => ({ default: m.NetworkAdminPage })));
 
 function SuspenseWrap({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoadingFallback />}>{children}</Suspense>;
@@ -46,6 +49,9 @@ export default function App() {
         <Route path="/buchhaltung-reports" element={<SuspenseWrap><BuchhaltungReportsPage /></SuspenseWrap>} />
         <Route path="/tagesabschluss" element={<SuspenseWrap><TagesabschlussPage /></SuspenseWrap>} />
         <Route path="/monatsbericht" element={<SuspenseWrap><MonatsberichtPage /></SuspenseWrap>} />
+        <Route path="/netzwerk" element={<SuspenseWrap><NetworkWizard /></SuspenseWrap>} />
+        <Route path="/netzwerk-auftraege" element={<SuspenseWrap><NetworkOrdersPage /></SuspenseWrap>} />
+        <Route path="/netzwerk-admin" element={<SuspenseWrap><NetworkAdminPage /></SuspenseWrap>} />
         <Route path="/statistik" element={<SuspenseWrap><StatistikPage /></SuspenseWrap>} />
         <Route
           path="/einstellungen"

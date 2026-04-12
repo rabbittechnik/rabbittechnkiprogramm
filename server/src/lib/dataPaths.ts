@@ -60,3 +60,9 @@ export function acceptanceDir(): string {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   return d;
 }
+
+export function networkOrdersDir(): string {
+  const d = path.join(getDataRoot(), "network-orders");
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  return d;
+}

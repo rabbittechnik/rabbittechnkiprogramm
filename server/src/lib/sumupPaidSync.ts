@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { getSumUpCheckout, type SumUpCheckoutResource } from "./sumupCheckout.js";
 import { getSumUpTransaction, isSumUpTransactionPaid, type SumUpTransactionResource } from "./sumupTransaction.js";
 import { syncPrimaryInvoicePaymentAndPdf } from "./invoiceGobd.js";
+import { finalizeNetworkOrderInvoice } from "./networkOrderFinalize.js";
 
 export type RepairRowLite = {
   id: string;
@@ -309,7 +310,7 @@ export async function syncRepairPaymentFromSumUp(
 export async function syncPaymentFromSumUpCheckoutId(
   db: Database.Database,
   checkoutId: string
-): Promise<{ updated: boolean; checkout_status?: string; repair_id?: string }> {
+): Promise<{ updated: boolean; checkout_status?: string; repair_id?: string; network_order_id?: string }> {
   const keys = getSumUpKeys();
   if (!keys) {
     return { updated: false, checkout_status: "NO_API_KEY" };
@@ -321,9 +322,125 @@ export async function syncPaymentFromSumUpCheckoutId(
     return { updated: false, checkout_status: "FETCH_ERROR" };
   }
   const result = await applySumUpPaidCheckout(db, checkout);
+  if (result.applied) {
+    return {
+      updated: true,
+      checkout_status: checkout.status,
+      repair_id: result.repair_id,
+    };
+  }
+  const nw = await applySumUpPaidNetworkCheckout(db, checkout);
   return {
-    updated: result.applied,
+    updated: nw.applied,
     checkout_status: checkout.status,
     repair_id: result.repair_id,
+    network_order_id: nw.network_order_id,
   };
+}
+
+type NetworkOrderCheckoutRow = {
+  id: string;
+  status: string;
+  grand_total_cents: number;
+  payment_status: string;
+  sumup_checkout_id: string | null;
+};
+
+function amountMatchesNetworkOrder(checkout: SumUpCheckoutResource, order: NetworkOrderCheckoutRow): boolean {
+  const expected = Math.max(0.01, order.grand_total_cents / 100);
+  const got = typeof checkout.amount === "number" ? checkout.amount : Number(checkout.amount);
+  if (!Number.isFinite(got)) return false;
+  return Math.abs(got - expected) < 0.02;
+}
+
+/**
+ * SumUp Hosted Checkout für Netzwerk-Auftrag (checkout_reference nw-…).
+ * Wird von Webhooks / manuellem sumup-sync genutzt.
+ */
+export async function applySumUpPaidNetworkCheckout(
+  db: Database.Database,
+  checkout: SumUpCheckoutResource
+): Promise<{ applied: boolean; network_order_id?: string; reason?: string }> {
+  const st = String(checkout.status ?? "").toUpperCase();
+  if (st !== "PAID") {
+    return { applied: false, reason: `checkout_status_${st || "unknown"}` };
+  }
+  const checkoutId = String(checkout.id ?? "");
+  const order = db
+    .prepare(
+      `SELECT id, status, grand_total_cents, payment_status, sumup_checkout_id FROM network_orders WHERE sumup_checkout_id = ?`
+    )
+    .get(checkoutId) as NetworkOrderCheckoutRow | undefined;
+
+  if (!order) {
+    return { applied: false, reason: "network_order_not_found" };
+  }
+  if (order.payment_status === "bezahlt") {
+    return { applied: false, network_order_id: order.id, reason: "already_paid" };
+  }
+  if (!amountMatchesNetworkOrder(checkout, order)) {
+    return { applied: false, reason: "amount_mismatch" };
+  }
+  if (order.status !== "geliefert") {
+    return { applied: false, reason: `wrong_status_${order.status}` };
+  }
+
+  db.prepare(
+    `UPDATE network_orders SET
+       status = 'uebergeben',
+       payment_status = 'bezahlt',
+       payment_method = 'sumup',
+       sumup_channel = COALESCE(sumup_channel, 'online'),
+       payment_paid_at = datetime('now'),
+       updated_at = datetime('now')
+     WHERE id = ?`
+  ).run(order.id);
+
+  try {
+    await finalizeNetworkOrderInvoice(db, order.id);
+  } catch (e) {
+    console.error("[network-invoice] finalize after SumUp", e);
+  }
+
+  return { applied: true, network_order_id: order.id };
+}
+
+/** Werkstatt: SumUp-Status für Netzwerk-Auftrag nachziehen (Checkout PAID → bezahlt + Rechnung). */
+export async function syncNetworkOrderPaymentFromSumUp(
+  db: Database.Database,
+  orderId: string
+): Promise<{ updated: boolean; checkout_status?: string; order?: unknown }> {
+  const keys = getSumUpKeys();
+  const order = db
+    .prepare(
+      `SELECT id, status, grand_total_cents, payment_status, payment_method, sumup_checkout_id, sumup_channel FROM network_orders WHERE id = ?`
+    )
+    .get(orderId) as
+    | (NetworkOrderCheckoutRow & { payment_method: string | null; sumup_channel: string | null })
+    | undefined;
+
+  if (!order) {
+    return { updated: false };
+  }
+  if (order.payment_status === "bezahlt") {
+    return { updated: false, order: db.prepare(`SELECT * FROM network_orders WHERE id = ?`).get(orderId) };
+  }
+  if (!keys) {
+    return { updated: false, checkout_status: "NO_API_KEY" };
+  }
+  if (!order.sumup_checkout_id) {
+    return { updated: false };
+  }
+  try {
+    const checkout = await getSumUpCheckout({ apiKey: keys.apiKey, checkoutId: order.sumup_checkout_id });
+    const result = await applySumUpPaidNetworkCheckout(db, checkout);
+    const full = db.prepare(`SELECT * FROM network_orders WHERE id = ?`).get(orderId);
+    const cst = String(checkout.status ?? "");
+    if (result.applied) {
+      return { updated: true, checkout_status: cst || "PAID", order: full };
+    }
+    return { updated: false, checkout_status: cst || undefined, order: full };
+  } catch {
+    return { updated: false, checkout_status: "ERROR" };
+  }
 }
