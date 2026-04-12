@@ -6,7 +6,27 @@ export const REPAIR_NOTIFICATION_POLL_MS = 18_000;
 /** Sichtbare Party-Animation + Klingelton-Dauer (ms). */
 export const NEW_REPAIR_PARTY_DURATION_MS = 30_000;
 
-export type RepairNotifyRow = { id: string; is_test?: number | boolean | null };
+export type RepairNotifyRow = {
+  id: string;
+  is_test?: number | boolean | string | null;
+  /** Optional, für Erkennung „frischer“ Testauftrag beim ersten Listen-Abruf */
+  created_at?: string | null;
+};
+
+const FRESH_TEST_NOTIFY_MS = 180_000;
+
+function rowIsTest(r: RepairNotifyRow): boolean {
+  const v = r.is_test;
+  return v === true || v === 1 || v === "1";
+}
+
+function parseCreatedAtMs(created_at: string | null | undefined): number | null {
+  if (created_at == null || String(created_at).trim() === "") return null;
+  const raw = String(created_at).trim();
+  const normalized = /T\d/.test(raw) ? raw : raw.replace(" ", "T");
+  const t = Date.parse(normalized);
+  return Number.isFinite(t) ? t : null;
+}
 
 let activeNotificationAudio: HTMLAudioElement | null = null;
 
@@ -100,11 +120,27 @@ export function setOnNewRealRepairsHandler(handler: ((ids: string[]) => void) | 
 
 /**
  * Nach jedem frischen Abruf der Reparatur-Liste aufrufen.
- * Erster Aufruf: nur Baseline, kein Ton. Danach: jede neue Auftrags-ID (inkl. Testauftrag) → Handler + Klingelton.
+ * Erster Aufruf: Baseline setzen; zusätzlich frische Testaufträge (letzte ~3 min) → Ton (Navigation nach Annahme).
+ * Danach: jede neue Auftrags-ID (inkl. Test) → Handler + Klingelton.
  */
 export function observeRepairListForNewNotifications(rows: ReadonlyArray<RepairNotifyRow>): void {
   if (baselineSeenIds === null) {
     baselineSeenIds = new Set(rows.map((r) => r.id));
+    const now = Date.now();
+    const freshTestIds = rows
+      .filter((r) => {
+        if (!rowIsTest(r)) return false;
+        const t = parseCreatedAtMs(r.created_at);
+        if (t === null) return false;
+        return now - t <= FRESH_TEST_NOTIFY_MS;
+      })
+      .map((r) => r.id);
+    if (freshTestIds.length > 0) {
+      queueMicrotask(() => {
+        onNewRealRepairsHandler?.(freshTestIds);
+        playNewRepairNotificationSound();
+      });
+    }
     return;
   }
   const newIds: string[] = [];
