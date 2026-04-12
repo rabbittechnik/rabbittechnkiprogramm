@@ -6,11 +6,13 @@ import type Database from "better-sqlite3";
 import { networkOrdersDir } from "./dataPaths.js";
 import { formatDeBerlinNow, formatDeBerlin } from "./formatBerlin.js";
 import { vatFromGrossCents } from "./networkPricing.js";
+import { SIGNATURE_PAD_BG, signatureDrawSize } from "./pdfSignatureBox.js";
 
 const W = 595;
 const H = 842;
 const M = 48;
 const CONTENT_W = W - M * 2;
+const HEADER_H = 128;
 
 const COL = {
   headerBg: rgb(0.04, 0.07, 0.13),
@@ -84,24 +86,26 @@ async function buildPdf(opts: {
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const page = pdf.addPage([W, H]);
-  let y = H - 52;
+  let y = H - 36;
 
   const line = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; dy?: number } = {}) => {
     page.drawText(text, { x: o.x ?? M, y, size, font: o.bold ? fontBold : font, color: o.color ?? COL.text });
     y -= size + (o.dy ?? 4);
   };
 
-  page.drawRectangle({ x: 0, y: H - 100, width: W, height: 100, color: COL.headerBg });
-  page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: COL.headerStripe });
+  page.drawRectangle({ x: 0, y: H - HEADER_H, width: W, height: HEADER_H, color: COL.headerBg });
+  page.drawRectangle({ x: 0, y: H - 5, width: W, height: 5, color: COL.headerStripe });
 
-  line(isInvoice ? "RECHNUNG – NETZWERKEINRICHTUNG" : "AUFTRAGSBESTÄTIGUNG – NETZWERKEINRICHTUNG", 9, { color: COL.subtitle, dy: 6 });
-  y -= 4;
-  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 8 });
+  line(isInvoice ? "RECHNUNG – NETZWERKEINRICHTUNG" : "AUFTRAGSBESTÄTIGUNG – NETZWERKEINRICHTUNG", 9, { color: COL.subtitle, dy: 5 });
+  y -= 2;
+  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 7 });
   if (isInvoice && order.invoice_number) {
-    line(`Rechnungsnr. ${order.invoice_number}`, 11, { bold: true, color: COL.accent, dy: 6 });
+    line(`Rechnungsnr. ${order.invoice_number}`, 11, { bold: true, color: COL.accent, dy: 5 });
   }
-  line(`Datum: ${formatDeBerlinNow({ dateStyle: "long", timeStyle: "short" })}`, 10, { color: COL.subtitle, dy: 10 });
-  y -= 8;
+
+  y = H - HEADER_H - 22;
+  line(`Datum: ${formatDeBerlinNow({ dateStyle: "long", timeStyle: "short" })}`, 10, { color: COL.text, dy: 6 });
+  y -= 10;
 
   const metaLines = [
     `Kunde: ${order.customer_name}`,
@@ -114,7 +118,7 @@ async function buildPdf(opts: {
   page.drawRectangle({ x: M - 4, y: y - metaH, width: CONTENT_W + 8, height: metaH, color: COL.boxBg, borderColor: COL.boxBorder, borderWidth: 0.8 });
   y -= pad;
   for (const ml of metaLines) line(ml, 10, { color: COL.text, dy: 3 });
-  y -= pad + 10;
+  y -= pad + 14;
 
   line("LEISTUNG", 9, { bold: true, color: COL.accent, dy: 6 });
   y -= 2;
@@ -164,14 +168,29 @@ async function buildPdf(opts: {
       y -= 4;
       line("Unterschrift Kunde", 9, { bold: true, color: COL.accent, dy: 4 });
       const sigBoxW = 280;
-      const sigBoxH = 80;
-      page.drawRectangle({ x: M, y: y - sigBoxH, width: sigBoxW, height: sigBoxH, borderColor: COL.sigFrame, borderWidth: 0.8, color: rgb(0.98, 0.99, 1) });
+      const sigBoxH = 88;
+      const pad = 8;
+      const innerW = sigBoxW - pad * 2;
+      const innerH = sigBoxH - pad * 2;
       try {
-        const img = parsed.kind === "png" ? await pdf.embedPng(parsed.bytes) : await pdf.embedJpg(parsed.bytes);
-        const scale = Math.min(sigBoxW / img.width, sigBoxH / img.height) * 0.9;
-        page.drawImage(img, { x: M + 4, y: y - sigBoxH + 4, width: img.width * scale, height: img.height * scale });
-      } catch { /* signature embed failed */ }
-      y -= sigBoxH + 8;
+        const emb = parsed.kind === "png" ? await pdf.embedPng(parsed.bytes) : await pdf.embedJpg(parsed.bytes);
+        const { width: iw, height: ih } = signatureDrawSize(emb.width, emb.height, innerW, innerH);
+        const boxH = ih + pad * 2;
+        const boxBottom = y - boxH;
+        page.drawRectangle({
+          x: M,
+          y: boxBottom,
+          width: sigBoxW,
+          height: boxH,
+          borderColor: COL.sigFrame,
+          borderWidth: 0.8,
+          color: SIGNATURE_PAD_BG,
+        });
+        page.drawImage(emb, { x: M + pad, y: boxBottom + pad, width: iw, height: ih });
+        y = boxBottom - 10;
+      } catch {
+        y -= sigBoxH + pad * 2 + 10;
+      }
     }
   }
 

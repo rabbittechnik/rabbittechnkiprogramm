@@ -8,6 +8,7 @@ import { formatDeBerlinNow } from "./formatBerlin.js";
 const W = 595;
 const H = 842;
 const M = 48;
+const HEADER_H = 108;
 
 export async function writeAdjustmentDocumentPdf(opts: {
   invoiceNumber: string;
@@ -22,7 +23,7 @@ export async function writeAdjustmentDocumentPdf(opts: {
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const page = pdf.addPage([W, H]);
-  let y = H - 56;
+  let y = H - 40;
 
   const title = opts.kind === "storno" ? "STORNO-RECHNUNG" : "KORREKTURRECHNUNG";
   const subtitle =
@@ -30,7 +31,7 @@ export async function writeAdjustmentDocumentPdf(opts: {
       ? "Vollständige Aufhebung der referenzierten Rechnung (GoBD-konform, revisionssicher gespeichert)."
       : "Korrekturposition zur referenzierten Rechnung (GoBD-konform, revisionssicher gespeichert).";
 
-  page.drawRectangle({ x: 0, y: H - 88, width: W, height: 88, color: rgb(0.12, 0.06, 0.06) });
+  page.drawRectangle({ x: 0, y: H - HEADER_H, width: W, height: HEADER_H, color: rgb(0.12, 0.06, 0.06) });
   page.drawRectangle({ x: 0, y: H - 5, width: W, height: 5, color: rgb(0.95, 0.35, 0.35) });
 
   const line = (text: string, size: number, bold = false, color = rgb(0.1, 0.1, 0.12)) => {

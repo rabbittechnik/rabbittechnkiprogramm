@@ -6,11 +6,13 @@ import type Database from "better-sqlite3";
 import { formatDeBerlin } from "./formatBerlin.js";
 import { statusLabelDe } from "./mail.js";
 import { reparaturenLabelsDir, reparaturenPdfsDir } from "./dataPaths.js";
+import { SIGNATURE_PAD_BG, signatureDrawSize } from "./pdfSignatureBox.js";
 
 const W = 595;
 const H = 842;
 const M = 48;
 const CONTENT_W = W - M * 2;
+const HEADER_H = 108;
 
 const COL = {
   headerBg: rgb(0.04, 0.07, 0.13),
@@ -114,7 +116,7 @@ export async function writeRepairOrderPdfs(
   const fontBold = await pdfA4.embedFont(StandardFonts.HelveticaBold);
 
   let page = pdfA4.addPage([W, H]);
-  let y = H - 52;
+  let y = H - 36;
 
   const line = (
     text: string,
@@ -128,22 +130,22 @@ export async function writeRepairOrderPdfs(
     y -= size + (o.dy ?? 4);
   };
 
-  page.drawRectangle({ x: 0, y: H - 88, width: W, height: 88, color: COL.headerBg });
+  page.drawRectangle({ x: 0, y: H - HEADER_H, width: W, height: HEADER_H, color: COL.headerBg });
   page.drawRectangle({ x: 0, y: H - 5, width: W, height: 5, color: COL.headerStripe });
 
   if (qrPng) {
     try {
       const qEmb = await pdfA4.embedPng(qrPng);
-      page.drawImage(qEmb, { x: W - M - 72, y: H - 78, width: 72, height: 72 });
+      page.drawImage(qEmb, { x: W - M - 72, y: H - 80, width: 72, height: 72 });
     } catch {
       /* optional */
     }
   }
 
-  line("REPARATURAUFTRAG", 9, { color: COL.subtitle, dy: 6 });
+  line("REPARATURAUFTRAG", 9, { color: COL.subtitle, dy: 5 });
   y -= 2;
-  line("Rabbit Technik Reparatur System", 11, { bold: true, color: COL.title, dy: 6 });
-  y -= 10;
+  line("Rabbit Technik Reparatur System", 12, { bold: true, color: COL.title, dy: 6 });
+  y = H - HEADER_H - 18;
 
   drawRule(page, y);
   y -= 14;
@@ -209,7 +211,7 @@ export async function writeRepairOrderPdfs(
   const sigBoxW = 260;
   if (y < sigBoxH + 120) {
     page = pdfA4.addPage([W, H]);
-    y = H - 60;
+    y = H - 52;
     line("UNTERSCHRIFT KUNDE (Fortsetzung)", 11, { bold: true, color: COL.accent, dy: 8 });
     y -= 6;
   }
@@ -217,20 +219,23 @@ export async function writeRepairOrderPdfs(
   if (img) {
     try {
       const embedded = img.kind === "png" ? await pdfA4.embedPng(img.bytes) : await pdfA4.embedJpg(img.bytes);
-      const scale = Math.min(sigBoxW / embedded.width, sigBoxH / embedded.height);
-      const w = embedded.width * scale;
-      const h = embedded.height * scale;
+      const pad = 8;
+      const innerW = sigBoxW - pad * 2;
+      const innerH = sigBoxH - pad * 2;
+      const { width: w, height: h } = signatureDrawSize(embedded.width, embedded.height, innerW, innerH);
+      const boxH = h + pad * 2;
+      const boxBottom = y - boxH;
       page.drawRectangle({
         x: M - 2,
-        y: y - h - 10,
+        y: boxBottom,
         width: sigBoxW + 12,
-        height: h + 12,
+        height: boxH,
         borderColor: COL.sigFrame,
         borderWidth: 1,
-        color: rgb(0.98, 0.99, 1),
+        color: SIGNATURE_PAD_BG,
       });
-      page.drawImage(embedded, { x: M + 4, y: y - h - 4, width: w, height: h });
-      y -= h + 24;
+      page.drawImage(embedded, { x: M + pad, y: boxBottom + pad, width: w, height: h });
+      y = boxBottom - 14;
     } catch {
       line("(Unterschrift konnte nicht eingebettet werden.)", 9, { color: COL.muted });
     }

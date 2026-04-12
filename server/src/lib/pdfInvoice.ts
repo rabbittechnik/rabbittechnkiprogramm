@@ -11,6 +11,7 @@ const W = 595;
 const H = 842;
 const M = 48;
 const CONTENT_W = W - M * 2;
+const HEADER_H = 128;
 
 const COL = {
   headerBg: rgb(0.04, 0.07, 0.13),
@@ -82,8 +83,6 @@ export async function writeInvoicePdf(
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const page = pdf.addPage([W, H]);
 
-  let y = H - 52;
-
   const line = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; dy?: number } = {}) => {
     const x = o.x ?? M;
     const c = o.color ?? COL.text;
@@ -94,25 +93,31 @@ export async function writeInvoicePdf(
 
   const isTest = Number(repair.is_test) === 1;
 
-  page.drawRectangle({ x: 0, y: H - 100, width: W, height: 100, color: COL.headerBg });
-  page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: isTest ? rgb(1, 0.3, 0.2) : COL.headerStripe });
+  page.drawRectangle({ x: 0, y: H - HEADER_H, width: W, height: HEADER_H, color: COL.headerBg });
+  page.drawRectangle({ x: 0, y: H - 5, width: W, height: 5, color: isTest ? rgb(1, 0.3, 0.2) : COL.headerStripe });
 
+  let y = H - (isTest ? 54 : 38);
   if (isTest) {
     page.drawText("TESTRECHNUNG – KEIN ZAHLUNGSBELEG", {
-      x: M, y: H - 24, size: 11, font: fontBold, color: rgb(1, 0.3, 0.2),
+      x: M,
+      y: H - 30,
+      size: 10,
+      font: fontBold,
+      color: rgb(1, 0.35, 0.28),
     });
-    y -= 14;
   }
 
-  line(isTest ? "TESTRECHNUNG" : "RECHNUNG", 9, { color: COL.subtitle, dy: 6 });
-  y -= 4;
-  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 8 });
-  line(`Nr. ${invoiceNumber}`, 11, { bold: true, color: COL.accent, dy: 6 });
+  line(isTest ? "TESTRECHNUNG" : "RECHNUNG", 9, { color: COL.subtitle, dy: 5 });
+  y -= 2;
+  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 7 });
+  line(`Nr. ${invoiceNumber}`, 11, { bold: true, color: COL.accent, dy: 5 });
+
+  y = H - HEADER_H - 22;
   line(`Rechnungsdatum (DE): ${formatDeBerlinNow({ dateStyle: "long", timeStyle: "short" })}`, 10, {
-    color: COL.subtitle,
-    dy: 10,
+    color: COL.text,
+    dy: 6,
   });
-  y -= 8;
+  y -= 10;
 
   const metaLines = [
     `Kunde: ${String(repair.customer_name)}`,
@@ -134,7 +139,7 @@ export async function writeInvoicePdf(
   for (const ml of metaLines) {
     line(ml, 10, { color: COL.text, dy: 3 });
   }
-  y -= pad + 10;
+  y -= pad + 14;
 
   const sectionTitle = (t: string) => {
     line(t.toUpperCase(), 9, { bold: true, color: COL.accent, dy: 6 });

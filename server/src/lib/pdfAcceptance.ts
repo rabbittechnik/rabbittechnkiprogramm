@@ -5,11 +5,14 @@ import type Database from "better-sqlite3";
 import { formatVorschaeden } from "./mail.js";
 import { acceptanceDir } from "./dataPaths.js";
 import { formatDeBerlin } from "./formatBerlin.js";
+import { SIGNATURE_PAD_BG, signatureDrawSize } from "./pdfSignatureBox.js";
 
 const W = 595;
 const H = 842;
 const M = 48;
 const CONTENT_W = W - M * 2;
+/** Dunkler Kopf: genug Platz für 22pt-Titel + Cap-Höhe (pdf-lib: y = Baseline). */
+const HEADER_H = 128;
 
 const COL = {
   headerBg: rgb(0.04, 0.07, 0.13),
@@ -66,7 +69,7 @@ export async function writeAcceptancePdf(db: Database.Database, repairId: string
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   let page = pdf.addPage([W, H]);
-  let y = H - 52;
+  let y = H - 36;
 
   const line = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; dy?: number } = {}) => {
     const x = o.x ?? M;
@@ -76,16 +79,18 @@ export async function writeAcceptancePdf(db: Database.Database, repairId: string
     y -= size + (o.dy ?? 4);
   };
 
-  page.drawRectangle({ x: 0, y: H - 100, width: W, height: 100, color: COL.headerBg });
-  page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: COL.headerStripe });
+  page.drawRectangle({ x: 0, y: H - HEADER_H, width: W, height: HEADER_H, color: COL.headerBg });
+  page.drawRectangle({ x: 0, y: H - 5, width: W, height: 5, color: COL.headerStripe });
 
-  line("AUFTRAGSBESTÄTIGUNG", 9, { color: COL.subtitle, dy: 6 });
+  line("AUFTRAGSBESTÄTIGUNG", 9, { color: COL.subtitle, dy: 5 });
   y -= 2;
-  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 8 });
-  line(`Tracking: ${String(row.tracking_code)}`, 11, { bold: true, color: COL.accent, dy: 6 });
+  line("Rabbit-Technik", 22, { bold: true, color: COL.title, dy: 7 });
+  line(`Tracking: ${String(row.tracking_code)}`, 11, { bold: true, color: COL.accent, dy: 5 });
+
+  y = H - HEADER_H - 22;
   const aufnahme = formatDeBerlin(String(row.created_at ?? ""), { dateStyle: "long", timeStyle: "short" });
-  line(`Aufnahme (Werkstattzeit Deutschland): ${aufnahme}`, 10, { color: COL.subtitle, dy: 10 });
-  y -= 8;
+  line(`Aufnahme (Werkstattzeit Deutschland): ${aufnahme}`, 10, { color: COL.text, dy: 6 });
+  y -= 10;
 
   const metaLines = [
     `Kunde: ${String(row.customer_name)}`,
@@ -106,7 +111,7 @@ export async function writeAcceptancePdf(db: Database.Database, repairId: string
   });
   y -= pad;
   for (const ml of metaLines) line(ml, 10, { color: COL.text, dy: 3 });
-  y -= pad + 10;
+  y -= pad + 14;
 
   const sectionTitle = (t: string) => {
     line(t.toUpperCase(), 9, { bold: true, color: COL.accent, dy: 6 });
@@ -170,7 +175,7 @@ export async function writeAcceptancePdf(db: Database.Database, repairId: string
   const sigBoxW = 280;
   if (y < sigBoxH + 100) {
     page = pdf.addPage([W, H]);
-    y = H - 60;
+    y = H - 52;
     line("Kundenunterschrift (Fortsetzung)", 12, { bold: true, color: COL.accent, dy: 8 });
     y -= 6;
   }
@@ -178,20 +183,23 @@ export async function writeAcceptancePdf(db: Database.Database, repairId: string
   if (img) {
     try {
       const embedded = img.kind === "png" ? await pdf.embedPng(img.bytes) : await pdf.embedJpg(img.bytes);
-      const scale = Math.min(sigBoxW / embedded.width, sigBoxH / embedded.height);
-      const w = embedded.width * scale;
-      const h = embedded.height * scale;
+      const pad = 8;
+      const innerW = sigBoxW - pad * 2;
+      const innerH = sigBoxH - pad * 2;
+      const { width: w, height: h } = signatureDrawSize(embedded.width, embedded.height, innerW, innerH);
+      const boxH = h + pad * 2;
+      const boxBottom = y - boxH;
       page.drawRectangle({
         x: M - 2,
-        y: y - h - 10,
+        y: boxBottom,
         width: sigBoxW + 12,
-        height: h + 12,
+        height: boxH,
         borderColor: COL.sigFrame,
         borderWidth: 1,
-        color: rgb(0.98, 0.99, 1),
+        color: SIGNATURE_PAD_BG,
       });
-      page.drawImage(embedded, { x: M + 4, y: y - h - 4, width: w, height: h });
-      y -= h + 28;
+      page.drawImage(embedded, { x: M + pad, y: boxBottom + pad, width: w, height: h });
+      y = boxBottom - 14;
     } catch {
       line("(Unterschrift konnte nicht eingebettet werden.)", 9, { color: COL.muted });
     }
