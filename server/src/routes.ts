@@ -1161,7 +1161,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
         `INSERT INTO invoices (
            id, repair_id, invoice_number, pdf_path, total_cents, payment_status,
            document_status, document_kind, finalized_at, retention_until, pdf_sha256, references_invoice_id
-         ) VALUES (?,?,?,?,?,?,?, datetime('now'), datetime('now', '+10 years'), ?, ?)`
+         ) VALUES (?,?,?,?,?,?,?,?, datetime('now'), datetime('now', '+10 years'), ?, ?)`
       ).run(
         stornoId,
         src.repair_id,
@@ -1230,7 +1230,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
         `INSERT INTO invoices (
            id, repair_id, invoice_number, pdf_path, total_cents, payment_status,
            document_status, document_kind, finalized_at, retention_until, pdf_sha256, references_invoice_id
-         ) VALUES (?,?,?,?,?,?,?, datetime('now'), datetime('now', '+10 years'), ?, ?)`
+         ) VALUES (?,?,?,?,?,?,?,?, datetime('now'), datetime('now', '+10 years'), ?, ?)`
       ).run(
         kid,
         src.repair_id,
