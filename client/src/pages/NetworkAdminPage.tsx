@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchWorkshop } from "../api";
 import { RtShell } from "../components/RtShell";
 import { useWorkshopGate } from "../useWorkshopGate";
+import { slugForNetworkDeviceImage } from "../lib/networkDeviceImage";
 
 type Settings = {
   network_markup_percent: string;
@@ -224,13 +225,20 @@ export function NetworkAdminPage() {
             </button>
           </div>
 
+          <p className="text-[11px] text-zinc-500">
+            Bilder für den Wizard (offline): Dateien unter <code className="text-zinc-400">/network-devices/</code> z. B.{" "}
+            <code className="text-zinc-400">fritzbox-7590-ax.webp</code> – Slug aus Modellname, siehe README im Ordner.
+          </p>
           <div className="overflow-x-auto">
             <table className="rt-table w-full">
-              <thead><tr><th>Modell</th><th>Typ</th><th>Anschluss</th><th>WLAN</th><th className="text-right">Basispreis (€)</th></tr></thead>
+              <thead><tr><th>Modell</th><th>Bild-Slug</th><th>Typ</th><th>Anschluss</th><th>WLAN</th><th className="text-right">Basispreis (€)</th></tr></thead>
               <tbody>
                 {devices.map((d) => (
                   <tr key={d.id}>
                     <td className="font-medium text-white">{d.brand} {d.model}</td>
+                    <td className="font-mono text-[10px] text-zinc-500 max-w-[140px] truncate" title={slugForNetworkDeviceImage(d.model)}>
+                      {slugForNetworkDeviceImage(d.model)}
+                    </td>
                     <td className="capitalize">{d.type}</td>
                     <td>{d.connection_type ?? "–"}</td>
                     <td>{d.wifi_standard}</td>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchJson, fetchWorkshop, fetchWorkshopBlob } from "../api";
 import { SignatureCanvas, type SignatureCanvasRef } from "../components/SignatureCanvas";
+import { NetworkDeviceThumb } from "../components/NetworkDeviceThumb";
 
 type StammCustomer = { id: string; name: string; email: string | null; phone: string | null; address: string | null };
 type CatalogDevice = {
@@ -242,11 +243,14 @@ export function NetworkWizard() {
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {routers.map((r) => (
                 <button key={r.id} type="button" onClick={() => setSelectedRouter(r)}
-                  className={`text-left rounded-xl border p-4 transition-all active:scale-[0.97] ${selectedRouter?.id === r.id ? "border-[#00d4ff] bg-[#00d4ff]/10 ring-1 ring-[#00d4ff]/40" : "border-zinc-700 bg-[#0a1220] hover:border-zinc-500"}`}>
-                  <p className="font-semibold text-white text-sm">{r.model}</p>
-                  <p className="text-xs text-zinc-400 mt-1">{r.connection_type ? CONN_LABELS[r.connection_type] ?? r.connection_type : "Ohne Modem"} · {r.wifi_standard}</p>
-                  <p className="text-xs text-zinc-500">{r.speed}</p>
-                  <p className="text-base font-mono text-[#00d4ff] mt-2">{euro(r.price_cents)}</p>
+                  className={`flex gap-3 items-stretch text-left rounded-xl border p-4 min-h-[7.5rem] transition-all active:scale-[0.97] ${selectedRouter?.id === r.id ? "border-[#00d4ff] bg-[#00d4ff]/10 ring-1 ring-[#00d4ff]/40" : "border-zinc-700 bg-[#0a1220] hover:border-zinc-500"}`}>
+                  <div className="flex-1 min-w-0 flex flex-col">
+                    <p className="font-semibold text-white text-sm leading-snug">{r.model}</p>
+                    <p className="text-xs text-zinc-400 mt-1">{r.connection_type ? CONN_LABELS[r.connection_type] ?? r.connection_type : "Ohne Modem"} · {r.wifi_standard}</p>
+                    <p className="text-xs text-zinc-500 line-clamp-2">{r.speed}</p>
+                    <p className="text-base font-mono text-[#00d4ff] mt-auto pt-2">{euro(r.price_cents)}</p>
+                  </div>
+                  <NetworkDeviceThumb model={r.model} type="router" />
                 </button>
               ))}
             </div>
@@ -258,20 +262,23 @@ export function NetworkWizard() {
               {repeaters.map((r) => {
                 const inCart = repeaterCart.find((c) => c.device.id === r.id);
                 return (
-                  <div key={r.id} className={`rounded-xl border p-4 ${inCart ? "border-violet-400 bg-violet-500/10" : "border-zinc-700 bg-[#0a1220]"}`}>
-                    <p className="font-semibold text-white text-sm">{r.model}</p>
-                    <p className="text-xs text-zinc-400 mt-1">{r.wifi_standard} · {r.mesh_support ? "Mesh" : "Standalone"}</p>
-                    <p className="text-xs text-zinc-500">{r.speed}</p>
-                    <p className="text-base font-mono text-violet-300 mt-2">{euro(r.price_cents)}</p>
-                    {inCart ? (
-                      <div className="flex items-center gap-2 mt-3">
-                        <button type="button" onClick={() => setRepeaterQty(r.id, inCart.quantity - 1)} className="w-9 h-9 rounded-lg border border-zinc-600 text-zinc-300 flex items-center justify-center min-h-0 min-w-0">−</button>
-                        <span className="text-white font-mono w-8 text-center">{inCart.quantity}</span>
-                        <button type="button" onClick={() => setRepeaterQty(r.id, inCart.quantity + 1)} className="w-9 h-9 rounded-lg border border-zinc-600 text-zinc-300 flex items-center justify-center min-h-0 min-w-0">+</button>
-                      </div>
-                    ) : (
-                      <button type="button" onClick={() => addRepeater(r)} className="mt-3 text-xs text-violet-300 underline min-h-0 min-w-0">Hinzufügen</button>
-                    )}
+                  <div key={r.id} className={`flex gap-3 items-stretch rounded-xl border p-4 min-h-[7.5rem] ${inCart ? "border-violet-400 bg-violet-500/10" : "border-zinc-700 bg-[#0a1220]"}`}>
+                    <div className="flex-1 min-w-0 flex flex-col">
+                      <p className="font-semibold text-white text-sm leading-snug">{r.model}</p>
+                      <p className="text-xs text-zinc-400 mt-1">{r.wifi_standard} · {r.mesh_support ? "Mesh" : "Standalone"}</p>
+                      <p className="text-xs text-zinc-500 line-clamp-2">{r.speed}</p>
+                      <p className="text-base font-mono text-violet-300 mt-auto pt-2">{euro(r.price_cents)}</p>
+                      {inCart ? (
+                        <div className="flex items-center gap-2 mt-2">
+                          <button type="button" onClick={() => setRepeaterQty(r.id, inCart.quantity - 1)} className="w-9 h-9 rounded-lg border border-zinc-600 text-zinc-300 flex items-center justify-center min-h-0 min-w-0">−</button>
+                          <span className="text-white font-mono w-8 text-center">{inCart.quantity}</span>
+                          <button type="button" onClick={() => setRepeaterQty(r.id, inCart.quantity + 1)} className="w-9 h-9 rounded-lg border border-zinc-600 text-zinc-300 flex items-center justify-center min-h-0 min-w-0">+</button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => addRepeater(r)} className="mt-2 self-start text-xs text-violet-300 underline min-h-0 min-w-0">Hinzufügen</button>
+                      )}
+                    </div>
+                    <NetworkDeviceThumb model={r.model} type="repeater" />
                   </div>
                 );
               })}

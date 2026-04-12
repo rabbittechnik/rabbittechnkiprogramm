@@ -8,7 +8,7 @@
 // - Mutations (POST/PATCH/DELETE): immer Network-only
 // ---------------------------------------------------------------------------
 
-const SHELL_CACHE = "rt-shell-v2";
+const SHELL_CACHE = "rt-shell-v3";
 const DATA_CACHE = "rt-data-v1";
 
 // App Shell: bei Install komplett vorladen
