@@ -92,10 +92,6 @@ export function resetNewRepairNotificationBaseline(): void {
   baselineSeenIds = null;
 }
 
-function rowIsTest(r: RepairNotifyRow): boolean {
-  return r.is_test === true || r.is_test === 1;
-}
-
 let onNewRealRepairsHandler: ((ids: string[]) => void) | null = null;
 
 export function setOnNewRealRepairsHandler(handler: ((ids: string[]) => void) | null): void {
@@ -104,21 +100,21 @@ export function setOnNewRealRepairsHandler(handler: ((ids: string[]) => void) | 
 
 /**
  * Nach jedem frischen Abruf der Reparatur-Liste aufrufen.
- * Erster Aufruf: nur Baseline, kein Ton. Danach: neue nicht-Test-IDs → Handler + Klingelton.
+ * Erster Aufruf: nur Baseline, kein Ton. Danach: jede neue Auftrags-ID (inkl. Testauftrag) → Handler + Klingelton.
  */
 export function observeRepairListForNewNotifications(rows: ReadonlyArray<RepairNotifyRow>): void {
   if (baselineSeenIds === null) {
     baselineSeenIds = new Set(rows.map((r) => r.id));
     return;
   }
-  const newRealIds: string[] = [];
+  const newIds: string[] = [];
   for (const r of rows) {
     if (baselineSeenIds.has(r.id)) continue;
     baselineSeenIds.add(r.id);
-    if (!rowIsTest(r)) newRealIds.push(r.id);
+    newIds.push(r.id);
   }
-  if (newRealIds.length === 0) return;
-  onNewRealRepairsHandler?.(newRealIds);
+  if (newIds.length === 0) return;
+  onNewRealRepairsHandler?.(newIds);
   playNewRepairNotificationSound();
 }
 
@@ -160,7 +156,7 @@ export function useNewRepairNotification(opts: {
 }
 
 /**
- * Registriert Handler für neue echte Aufträge: 30s blinkende Zeilen + Party-Overlay; Klingelton nach max. Dauer stoppen.
+ * Registriert Handler für neue Aufträge (inkl. Test): 30s blinkende Zeilen + Party-Overlay; Klingelton nach max. Dauer stoppen.
  */
 export function useNewRepairParty() {
   const [highlightIds, setHighlightIds] = useState<Set<string>>(() => new Set());
