@@ -65,8 +65,6 @@ CREATE TABLE IF NOT EXISTS repairs (
   is_test INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_repairs_order_number ON repairs(repair_order_number) WHERE repair_order_number IS NOT NULL;
-
 CREATE TABLE IF NOT EXISTS repair_services (
   repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,
   service_id TEXT NOT NULL REFERENCES services(id),
