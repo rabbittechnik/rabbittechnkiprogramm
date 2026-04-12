@@ -67,8 +67,8 @@ export async function sendReportDigestEmails(
       lines.push(
         "",
         `Bar: ${formatEuroFromCents(row.bar_cents)} € | Online (SumUp): ${formatEuroFromCents(row.online_sumup_cents)} €`,
-        `SumUp Tap to Pay: ${formatEuroFromCents(row.tap_to_pay_cents)} € | Überweisung: ${formatEuroFromCents(row.ueberweisung_cents)} €`,
-      ];
+        `SumUp Tap to Pay: ${formatEuroFromCents(row.tap_to_pay_cents)} € | Überweisung: ${formatEuroFromCents(row.ueberweisung_cents)} €`
+      );
       if (row.other_cents > 0) lines.push(`Sonstige: ${formatEuroFromCents(row.other_cents)} €`);
       lines.push(
         "",
@@ -133,8 +133,8 @@ export async function sendReportDigestEmails(
       lines.push(
         "",
         `Bar: ${formatEuroFromCents(row.bar_cents)} € | Online (SumUp): ${formatEuroFromCents(row.online_sumup_cents)} €`,
-        `SumUp Tap to Pay: ${formatEuroFromCents(row.tap_to_pay_cents)} € | Überweisung: ${formatEuroFromCents(row.ueberweisung_cents)} €`,
-      ];
+        `SumUp Tap to Pay: ${formatEuroFromCents(row.tap_to_pay_cents)} € | Überweisung: ${formatEuroFromCents(row.ueberweisung_cents)} €`
+      );
       if (row.other_cents > 0) lines.push(`Sonstige: ${formatEuroFromCents(row.other_cents)} €`);
       lines.push(
         "",
