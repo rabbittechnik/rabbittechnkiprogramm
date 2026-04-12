@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type Database from "better-sqlite3";
-import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { requireWorkshopFullAuth } from "./lib/workshopAuth.js";
 import { formatBerlinBusinessDayRangeDe } from "./lib/berlinCalendar.js";
 import { computeDayRevenueBreakdown } from "./lib/dayClosing.js";
 import {
@@ -15,11 +15,11 @@ function paramStr(v: string | string[] | undefined): string {
 }
 
 export function registerDayClosingRoutes(app: Express, db: Database.Database): void {
-  app.get("/api/tagesabschluesse/kasse/eroeffnungsbestand", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/tagesabschluesse/kasse/eroeffnungsbestand", requireWorkshopFullAuth, (_req, res) => {
     res.json({ opening_cents: getRegisterOpeningCents(db) });
   });
 
-  app.put("/api/tagesabschluesse/kasse/eroeffnungsbestand", requireWorkshopAuth, (req, res) => {
+  app.put("/api/tagesabschluesse/kasse/eroeffnungsbestand", requireWorkshopFullAuth, (req, res) => {
     const raw = (req.body as { opening_cents?: unknown })?.opening_cents;
     const opening_cents = Math.round(Number(raw));
     if (!Number.isFinite(opening_cents)) {
@@ -31,7 +31,7 @@ export function registerDayClosingRoutes(app: Express, db: Database.Database): v
     res.json({ ok: true, opening_cents });
   });
 
-  app.get("/api/tagesabschluesse", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/tagesabschluesse", requireWorkshopFullAuth, (_req, res) => {
     const rows = db
       .prepare(
         `SELECT id, business_date, generated_at, total_cents, bar_cents, online_sumup_cents, tap_to_pay_cents,
@@ -42,7 +42,7 @@ export function registerDayClosingRoutes(app: Express, db: Database.Database): v
     res.json({ closings: rows });
   });
 
-  app.get("/api/tagesabschluesse/:date", requireWorkshopAuth, (req, res) => {
+  app.get("/api/tagesabschluesse/:date", requireWorkshopFullAuth, (req, res) => {
     const date = paramStr(req.params.date);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       res.status(400).json({ error: "Datum im Format YYYY-MM-DD (Kalendertag Europe/Berlin)" });

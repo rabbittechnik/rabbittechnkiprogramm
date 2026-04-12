@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type Database from "better-sqlite3";
 import { nanoid } from "nanoid";
-import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { requireWorkshopFullAuth } from "./lib/workshopAuth.js";
 import {
   DEFAULT_MARKUP_BPS,
   buildTeileBestellenCatalog,
@@ -25,7 +25,7 @@ function uniqueRef(db: Database.Database): string {
 }
 
 export function registerHardwareCatalogOrderRoutes(app: Express, db: Database.Database): void {
-  app.get("/api/teile-bestellen/katalog", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/teile-bestellen/katalog", requireWorkshopFullAuth, (_req, res) => {
     const categories = buildTeileBestellenCatalog(DEFAULT_MARKUP_BPS).map((c) => ({
       id: c.id,
       label: c.label,
@@ -46,7 +46,7 @@ export function registerHardwareCatalogOrderRoutes(app: Express, db: Database.Da
     res.json({ markup_bps: DEFAULT_MARKUP_BPS, categories });
   });
 
-  app.get("/api/teile-bestellen/orders", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/teile-bestellen/orders", requireWorkshopFullAuth, (_req, res) => {
     const rows = db
       .prepare(
         `SELECT o.id, o.reference_code, o.customer_id, c.name AS customer_name, o.status, o.total_sale_cents,
@@ -59,7 +59,7 @@ export function registerHardwareCatalogOrderRoutes(app: Express, db: Database.Da
     res.json({ orders: rows });
   });
 
-  app.get("/api/teile-bestellen/orders/:id", requireWorkshopAuth, (req, res) => {
+  app.get("/api/teile-bestellen/orders/:id", requireWorkshopFullAuth, (req, res) => {
     const id = paramStr(req.params.id);
     const o = db
       .prepare(
@@ -81,7 +81,7 @@ export function registerHardwareCatalogOrderRoutes(app: Express, db: Database.Da
     res.json({ order: o, lines });
   });
 
-  app.post("/api/teile-bestellen/orders", requireWorkshopAuth, async (req, res) => {
+  app.post("/api/teile-bestellen/orders", requireWorkshopFullAuth, async (req, res) => {
     const body = req.body as {
       customer_id?: string;
       lines?: { product_id: string; quantity: number }[];

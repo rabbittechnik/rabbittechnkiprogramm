@@ -1,6 +1,8 @@
-import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router-dom";
+import { lazy, Suspense, useEffect } from "react";
+import { Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { AppShell, PageLoadingFallback } from "./components/AppShell";
+import { getWorkshopToken, getWorkshopTokenRole } from "./workshopAuth";
+import { parseScanToTrackingCode } from "./lib/trackingScan";
 
 // ─── UI Layer (PWA) ────────────────────────────────────────────────────────
 // AppShell = persistente Navigation, Dashboard, Menü „Buchhaltung & Reports",
@@ -12,6 +14,7 @@ import { AppShell, PageLoadingFallback } from "./components/AppShell";
 const Home = lazy(() => import("./pages/Home").then((m) => ({ default: m.Home })));
 const Wizard = lazy(() => import("./pages/Wizard").then((m) => ({ default: m.Wizard })));
 const Workshop = lazy(() => import("./pages/Workshop").then((m) => ({ default: m.Workshop })));
+const WorkshopBench = lazy(() => import("./pages/WorkshopBench").then((m) => ({ default: m.WorkshopBench })));
 const KundenPage = lazy(() => import("./pages/KundenPage").then((m) => ({ default: m.KundenPage })));
 const TrackPage = lazy(() => import("./pages/TrackPage").then((m) => ({ default: m.TrackPage })));
 const LagerPage = lazy(() => import("./pages/LagerPage").then((m) => ({ default: m.LagerPage })));
@@ -31,6 +34,36 @@ function SuspenseWrap({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoadingFallback />}>{children}</Suspense>;
 }
 
+/** Alias `/repair/:code`: Werkstatt → Auftrag öffnen, sonst öffentliches Tracking. */
+function RepairAliasRedirect() {
+  const { code } = useParams();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const raw = (code ?? "").trim();
+    if (!raw) {
+      navigate("/", { replace: true });
+      return;
+    }
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch {
+      decoded = raw;
+    }
+    if (getWorkshopToken()) {
+      if (getWorkshopTokenRole() === "bench") {
+        navigate(`/werkstatt-montage?scan=${encodeURIComponent(decoded)}`, { replace: true });
+      } else {
+        navigate(`/werkstatt?scan=${encodeURIComponent(decoded)}`, { replace: true });
+      }
+      return;
+    }
+    const only = parseScanToTrackingCode(decoded) ?? decoded;
+    navigate(`/track/${encodeURIComponent(only)}`, { replace: true });
+  }, [code, navigate]);
+  return <PageLoadingFallback />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -40,11 +73,13 @@ export default function App() {
         <Route path="/" element={<SuspenseWrap><Home /></SuspenseWrap>} />
         <Route path="/annahme" element={<SuspenseWrap><Wizard /></SuspenseWrap>} />
         <Route path="/werkstatt" element={<SuspenseWrap><Workshop /></SuspenseWrap>} />
+        <Route path="/werkstatt-montage" element={<SuspenseWrap><WorkshopBench /></SuspenseWrap>} />
         <Route path="/auftraege" element={<SuspenseWrap><Workshop pageTitle="Auftragsverwaltung" /></SuspenseWrap>} />
         <Route path="/kunden" element={<SuspenseWrap><KundenPage /></SuspenseWrap>} />
         <Route path="/teile-bestellen" element={<SuspenseWrap><TeileBestellenPage /></SuspenseWrap>} />
         <Route path="/track" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
         <Route path="/track/:code" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
+        <Route path="/repair/:code" element={<RepairAliasRedirect />} />
         <Route path="/lager" element={<SuspenseWrap><LagerPage /></SuspenseWrap>} />
         <Route path="/rechnungen" element={<SuspenseWrap><RechnungenPage /></SuspenseWrap>} />
         <Route path="/buchhaltung-erp" element={<SuspenseWrap><ErpOverlayPage /></SuspenseWrap>} />

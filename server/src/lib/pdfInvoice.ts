@@ -78,10 +78,21 @@ export async function writeInvoicePdf(
     .prepare(`SELECT name, sale_cents FROM repair_parts WHERE repair_id = ?`)
     .all(repairId) as { name: string; sale_cents: number }[];
 
+  const repairLogs = db
+    .prepare(
+      `SELECT logged_at, action_type, description, duration_minutes FROM repair_logs WHERE repair_id = ? ORDER BY datetime(logged_at) ASC, id ASC`
+    )
+    .all(repairId) as {
+      logged_at: string;
+      action_type: string;
+      description: string;
+      duration_minutes: number | null;
+    }[];
+
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const page = pdf.addPage([W, H]);
+  let page = pdf.addPage([W, H]);
 
   const line = (text: string, size: number, o: { bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; dy?: number } = {}) => {
     const x = o.x ?? M;
@@ -163,6 +174,30 @@ export async function writeInvoicePdf(
     }
   }
   y -= 8;
+
+  const ensureBodySpace = (minYFromBottom: number) => {
+    if (y >= minYFromBottom) return;
+    page = pdf.addPage([W, H]);
+    y = H - M;
+  };
+
+  if (repairLogs.length > 0) {
+    ensureBodySpace(M + 100);
+    sectionTitle("Arbeitsprotokoll");
+    for (const lg of repairLogs) {
+      ensureBodySpace(M + 72);
+      const timeLbl = formatDeBerlin(lg.logged_at, { dateStyle: "short", timeStyle: "short" });
+      const dur = lg.duration_minutes != null ? ` · ${lg.duration_minutes} Min.` : "";
+      for (const ln of wrapLines(`${timeLbl} – ${lg.action_type}${dur}`, 82)) {
+        line(ln, 9, { bold: true, dy: 2 });
+      }
+      for (const ln of wrapLines(lg.description, 82)) {
+        line(ln, 9, { color: COL.muted, dy: 2 });
+      }
+      y -= 4;
+    }
+    y -= 6;
+  }
 
   const total = Number(repair.total_cents);
   const totalBoxH = 44;

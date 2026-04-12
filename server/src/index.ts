@@ -17,7 +17,7 @@ import { registerHardwareCatalogOrderRoutes } from "./hardwareCatalogOrderRoutes
 import { startDayClosingScheduler } from "./lib/dayClosingScheduler.js";
 import { startDataBackupScheduler } from "./lib/dataBackupScheduler.js";
 import { isAutomaticDataBackupWanted } from "./lib/dataBackup.js";
-import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { requireWorkshopFullAuth } from "./lib/workshopAuth.js";
 import { isMailConfigured, isResendConfigured, smtpMissingVars } from "./lib/mail.js";
 import { getPublicTrackingBaseUrl } from "./lib/publicUrl.js";
 import { getDataRoot, getDbFilePath, uploadsDir } from "./lib/dataPaths.js";
@@ -79,7 +79,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 8 * 1024 * 1024 } });
 
-app.post("/api/repairs/:id/media", requireWorkshopAuth, upload.array("files", 12), (req, res) => {
+app.post("/api/repairs/:id/media", requireWorkshopFullAuth, upload.array("files", 12), (req, res) => {
   const repairId = paramStr(req.params.id);
   const exists = db.prepare(`SELECT id FROM repairs WHERE id = ?`).get(repairId);
   if (!exists) {
@@ -101,21 +101,6 @@ app.post("/api/repairs/:id/media", requireWorkshopAuth, upload.array("files", 12
 });
 
 app.use("/uploads", express.static(UPLOAD_ROOT));
-
-app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
-       r.is_test,
-       c.name as customer_name, d.device_type, d.brand, d.model
-       FROM repairs r
-       JOIN customers c ON c.id = r.customer_id
-       JOIN devices d ON d.id = r.device_id
-       ORDER BY r.created_at DESC`
-    )
-    .all();
-  res.json(rows);
-});
 
 if (fs.existsSync(CLIENT_DIST)) {
   const indexHtml = path.join(CLIENT_DIST, "index.html");

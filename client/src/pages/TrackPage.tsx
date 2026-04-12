@@ -94,6 +94,7 @@ export function TrackPage() {
     customer: { name: string };
     device: { device_type: string; brand: string | null; model: string | null };
     parts: { name: string; status: string; sale_cents: number }[];
+    logs?: { timestamp: string; action_type: string; description: string; duration_minutes: number | null }[];
     message: string | null;
     invoice_number?: string | null;
     payment_due_until?: string;
@@ -276,6 +277,29 @@ export function TrackPage() {
                     "Ihr Auftrag wird bearbeitet. Bei Fragen erreichen Sie uns jederzeit."}
                 </p>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-500/20 bg-[#0a1220]/95 p-5 sm:p-6 space-y-3">
+              <h2 className="text-sm font-bold text-emerald-200/95 uppercase tracking-wider">Durchgeführte Arbeiten</h2>
+              {(data.logs ?? []).length === 0 ? (
+                <p className="text-zinc-500 text-sm">Sobald wir Arbeiten am Gerät dokumentieren, erscheinen sie hier.</p>
+              ) : (
+                <ul className="space-y-4">
+                  {(data.logs ?? []).map((lg, idx) => (
+                    <li
+                      key={`${lg.timestamp}-${idx}`}
+                      className="border-b border-white/10 pb-4 last:border-0 last:pb-0"
+                    >
+                      <p className="text-[11px] text-zinc-500 font-mono mb-1">
+                        {formatDeBerlin(lg.timestamp, { dateStyle: "medium", timeStyle: "short" })}
+                        {lg.duration_minutes != null ? ` · ${lg.duration_minutes} Min.` : ""}
+                      </p>
+                      <p className="text-white font-medium text-sm">{lg.action_type}</p>
+                      <p className="text-zinc-300 text-sm mt-1 whitespace-pre-wrap leading-relaxed">{lg.description}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

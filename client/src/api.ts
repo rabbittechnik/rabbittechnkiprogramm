@@ -93,13 +93,21 @@ export async function fetchWorkshopBlob(path: string): Promise<Blob> {
   return r.blob();
 }
 
-export async function fetchAuthStatus(): Promise<{ workshopAuthRequired: boolean }> {
+export async function fetchAuthStatus(): Promise<{
+  workshopAuthRequired: boolean;
+  benchAuthConfigured?: boolean;
+}> {
   return fetchJson("/api/auth/status");
 }
 
-export async function loginWorkshop(password: string): Promise<{
+export async function loginWorkshop(
+  password: string,
+  role: "workshop" | "bench" = "workshop"
+): Promise<{
   token: string | null;
+  role?: "workshop" | "bench";
   workshopAuthRequired?: boolean;
+  benchAuthConfigured?: boolean;
 }> {
-  return fetchJson("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) });
+  return fetchJson("/api/auth/login", { method: "POST", body: JSON.stringify({ password, role }) });
 }

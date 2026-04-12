@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { RabbitMark, BrandWordmark } from "./RabbitMark";
 import { useOfflineSync } from "../lib/useOfflineSync";
+import { getWorkshopTokenRole } from "../workshopAuth";
 
 // ─── Navigation (UI Layer) ─────────────────────────────────────────────────
 const NAV_SECTIONS = [
@@ -11,6 +12,7 @@ const NAV_SECTIONS = [
       { to: "/", label: "Dashboard" },
       { to: "/annahme", label: "Reparaturannahme" },
       { to: "/werkstatt", label: "Auftragsverwaltung" },
+      { to: "/werkstatt-montage", label: "Montage-Tablet" },
       { to: "/kunden", label: "Kundenverwaltung" },
       { to: "/track", label: "Kunden-Tracking" },
       { to: "/lager", label: "Lager & Teile" },
@@ -40,6 +42,18 @@ const NAV_SECTIONS = [
 ];
 
 const FLAT_NAV = NAV_SECTIONS.flatMap((s) => s.items);
+
+const BENCH_NAV = [
+  { to: "/werkstatt-montage", label: "Montage-Tablet" },
+  { to: "/track", label: "Kunden-Tracking" },
+];
+
+function benchAllowedPath(path: string): boolean {
+  if (path === "/werkstatt-montage" || path === "/track") return true;
+  if (path.startsWith("/track/")) return true;
+  if (path.startsWith("/repair/")) return true;
+  return false;
+}
 
 // ─── Offline-Erkennung ─────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -73,17 +87,36 @@ function useIsStandalone() {
 // ─── App Shell ─────────────────────────────────────────────────────────────
 export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [, authBump] = useState(0);
   const online = useOnlineStatus();
   const standalone = useIsStandalone();
   const location = useLocation();
+  const navigate = useNavigate();
   const { pending, syncState, doSync } = useOfflineSync();
+
+  useEffect(() => {
+    const onTok = () => authBump((n) => n + 1);
+    window.addEventListener("rt-workshop-token-changed", onTok);
+    return () => window.removeEventListener("rt-workshop-token-changed", onTok);
+  }, []);
+
+  const benchSession = getWorkshopTokenRole() === "bench";
+
+  useEffect(() => {
+    if (benchSession && !benchAllowedPath(location.pathname)) {
+      navigate("/werkstatt-montage", { replace: true });
+    }
+  }, [benchSession, location.pathname, navigate]);
 
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
 
   const isHome = location.pathname === "/";
-  const currentLabel = FLAT_NAV.find((n) => n.to === location.pathname)?.label;
+  const flatForLabel = benchSession ? BENCH_NAV : FLAT_NAV;
+  const currentLabel =
+    flatForLabel.find((n) => n.to === location.pathname)?.label ??
+    (location.pathname === "/werkstatt-montage" ? "Montage-Tablet" : undefined);
 
   return (
     <div className="rt-dashboard-bg min-h-screen flex flex-col">
@@ -126,10 +159,10 @@ export function AppShell() {
       <header className="shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 border-b border-[#00d4ff]/20 bg-[#060b13]/95 backdrop-blur-sm sticky top-0 z-30">
         {/* Logo → Dashboard (großes Touch-Target) */}
         <Link
-          to="/"
+          to={benchSession ? "/werkstatt-montage" : "/"}
           className="flex items-center gap-2 sm:gap-3 rounded-xl shrink-0 p-1.5 -ml-1.5 active:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4ff]/60"
-          title="Dashboard"
-          aria-label="Rabbit Technik – Dashboard"
+          title={benchSession ? "Montage" : "Dashboard"}
+          aria-label={benchSession ? "Rabbit Technik – Montage" : "Rabbit Technik – Dashboard"}
         >
           <RabbitMark className="w-9 h-9 sm:w-10 sm:h-10" />
           <span className="hidden sm:block">
@@ -147,12 +180,14 @@ export function AppShell() {
         <div className="flex-1" />
 
         {/* Quick Links – Tablet-Größe */}
-        <Link
-          to="/buchhaltung-reports"
-          className="hidden sm:inline-flex items-center rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/20 hover:border-amber-300/50 active:scale-[0.97] transition-all whitespace-nowrap"
-        >
-          Buchhaltung & Reports
-        </Link>
+        {!benchSession && (
+          <Link
+            to="/buchhaltung-reports"
+            className="hidden sm:inline-flex items-center rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/20 hover:border-amber-300/50 active:scale-[0.97] transition-all whitespace-nowrap"
+          >
+            Buchhaltung & Reports
+          </Link>
+        )}
 
         {/* PWA-Indikator */}
         {standalone && (
@@ -216,12 +251,10 @@ export function AppShell() {
               </button>
             </div>
 
-            {NAV_SECTIONS.map((section) => (
-              <div key={section.label} className="py-2">
-                <p className="px-5 py-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
-                  {section.label}
-                </p>
-                {section.items.map((item) => {
+            {benchSession ? (
+              <div className="py-2">
+                <p className="px-5 py-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Montage</p>
+                {BENCH_NAV.map((item) => {
                   const active = location.pathname === item.to;
                   return (
                     <Link
@@ -239,7 +272,32 @@ export function AppShell() {
                   );
                 })}
               </div>
-            ))}
+            ) : (
+              NAV_SECTIONS.map((section) => (
+                <div key={section.label} className="py-2">
+                  <p className="px-5 py-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                    {section.label}
+                  </p>
+                  {section.items.map((item) => {
+                    const active = location.pathname === item.to;
+                    return (
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        className={`flex items-center px-5 py-3.5 text-[15px] font-medium transition-colors active:bg-[#00d4ff]/15 ${
+                          active
+                            ? "text-[#00d4ff] bg-[#00d4ff]/10 border-r-[3px] border-[#00d4ff]"
+                            : "text-zinc-200 hover:bg-white/5 hover:text-white"
+                        }`}
+                        onClick={() => setMenuOpen(false)}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))
+            )}
 
             {!online && (
               <div className="mx-5 mt-3 mb-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">

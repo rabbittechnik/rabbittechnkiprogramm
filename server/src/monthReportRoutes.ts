@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type Database from "better-sqlite3";
-import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { requireWorkshopFullAuth } from "./lib/workshopAuth.js";
 import { formatBerlinYearMonthRangeDe } from "./lib/berlinCalendar.js";
 import { computeMonthRevenueBreakdown } from "./lib/dayClosing.js";
 
@@ -10,7 +10,7 @@ function paramStr(v: string | string[] | undefined): string {
 }
 
 export function registerMonthReportRoutes(app: Express, db: Database.Database): void {
-  app.get("/api/monatsberichte", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/monatsberichte", requireWorkshopFullAuth, (_req, res) => {
     const rows = db
       .prepare(
         `SELECT id, year_month, generated_at, total_cents, bar_cents, online_sumup_cents, tap_to_pay_cents,
@@ -22,7 +22,7 @@ export function registerMonthReportRoutes(app: Express, db: Database.Database): 
     res.json({ reports: rows });
   });
 
-  app.get("/api/monatsberichte/:ym", requireWorkshopAuth, (req, res) => {
+  app.get("/api/monatsberichte/:ym", requireWorkshopFullAuth, (req, res) => {
     const ym = paramStr(req.params.ym);
     if (!/^\d{4}-\d{2}$/.test(ym)) {
       res.status(400).json({ error: "Monat als YYYY-MM (Kalender Europe/Berlin)" });

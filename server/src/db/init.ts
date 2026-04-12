@@ -28,6 +28,8 @@ export function openDatabase(): Database.Database {
   migrateServicesCategory(db);
   migrateHardwareCatalogOrders(db);
   migrateRepairOrderPdf(db);
+  migrateRepairLogs(db);
+  migrateRepairsInReparaturSince(db);
   return db;
 }
 
@@ -267,6 +269,29 @@ function migrateHardwareCatalogOrders(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_hardware_orders_created ON hardware_catalog_orders(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_hardware_order_lines_order ON hardware_catalog_order_lines(order_id);
   `);
+}
+
+function migrateRepairLogs(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repair_logs (
+      id TEXT PRIMARY KEY,
+      repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,
+      logged_at TEXT NOT NULL DEFAULT (datetime('now')),
+      action_type TEXT NOT NULL,
+      description TEXT NOT NULL,
+      duration_minutes INTEGER,
+      created_by TEXT NOT NULL DEFAULT 'workshop'
+    );
+    CREATE INDEX IF NOT EXISTS idx_repair_logs_repair ON repair_logs(repair_id);
+  `);
+}
+
+/** Montage-Tablet: Pflicht-Protokoll nach Start „in Reparatur“ (Zeitfenster für Logs vor „fertig“). */
+function migrateRepairsInReparaturSince(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "in_reparatur_since")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN in_reparatur_since TEXT`);
+  }
 }
 
 function migrateRepairsAcceptanceColumn(db: Database.Database): void {

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type Database from "better-sqlite3";
 import { nanoid } from "nanoid";
 import QRCode from "qrcode";
-import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { requireWorkshopFullAuth } from "./lib/workshopAuth.js";
 import { calculateOrderTotals, getMarkupPercent, getServiceFeeCents, getServiceFeeMode, vatFromGrossCents, type OrderItem } from "./lib/networkPricing.js";
 import { seedNetworkCatalog, refreshFromAvm } from "./lib/networkCatalog.js";
 import { writeNetworkConfirmationPdf } from "./lib/pdfNetworkOrder.js";
@@ -36,7 +36,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
     res.json({ devices, serviceFee: { cents: getServiceFeeCents(db), mode: getServiceFeeMode(db) } });
   });
 
-  app.post("/api/network/catalog/refresh", requireWorkshopAuth, async (_req, res) => {
+  app.post("/api/network/catalog/refresh", requireWorkshopFullAuth, async (_req, res) => {
     const result = await refreshFromAvm(db);
     res.json(result);
   });
@@ -120,7 +120,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
   });
 
   // ── Auftragsliste / Einzelauftrag ───────────────────────────────────────
-  app.get("/api/network/orders", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/network/orders", requireWorkshopFullAuth, (_req, res) => {
     const orders = db.prepare(
       `SELECT o.*, c.name AS customer_name, c.email AS customer_email
        FROM network_orders o JOIN customers c ON c.id = o.customer_id
@@ -129,7 +129,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
     res.json({ orders });
   });
 
-  app.get("/api/network/orders/:id", requireWorkshopAuth, (req, res) => {
+  app.get("/api/network/orders/:id", requireWorkshopFullAuth, (req, res) => {
     const id = String(req.params.id);
     const order = db.prepare(
       `SELECT o.*, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone, c.address AS customer_address
@@ -144,7 +144,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
   });
 
   // ── PDFs ────────────────────────────────────────────────────────────────
-  app.get("/api/network/orders/:id/confirmation.pdf", requireWorkshopAuth, async (req, res) => {
+  app.get("/api/network/orders/:id/confirmation.pdf", requireWorkshopFullAuth, async (req, res) => {
     const id = String(req.params.id);
     const row = db.prepare(`SELECT confirmation_pdf_path FROM network_orders WHERE id = ?`).get(id) as { confirmation_pdf_path: string | null } | undefined;
     if (row?.confirmation_pdf_path) {
@@ -160,7 +160,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
     } catch (e) { res.status(404).send(String(e)); }
   });
 
-  app.get("/api/network/orders/:id/invoice.pdf", requireWorkshopAuth, async (req, res) => {
+  app.get("/api/network/orders/:id/invoice.pdf", requireWorkshopFullAuth, async (req, res) => {
     const id = String(req.params.id);
     const row = db.prepare(`SELECT invoice_pdf_path, invoice_finalized_at FROM network_orders WHERE id = ?`).get(id) as { invoice_pdf_path: string | null; invoice_finalized_at: string | null } | undefined;
     if (row?.invoice_pdf_path) {
@@ -173,7 +173,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
   });
 
   // ── Lieferung markieren ─────────────────────────────────────────────────
-  app.patch("/api/network/orders/:id/delivery", requireWorkshopAuth, async (req, res) => {
+  app.patch("/api/network/orders/:id/delivery", requireWorkshopFullAuth, async (req, res) => {
     const id = String(req.params.id);
     const order = db.prepare(`SELECT status FROM network_orders WHERE id = ?`).get(id) as { status: string } | undefined;
     if (!order) { res.status(404).json({ error: "Nicht gefunden" }); return; }
@@ -186,7 +186,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
   });
 
   // ── Übergabe + Zahlung (analog repairs pickup) ──────────────────────────
-  app.post("/api/network/orders/:id/pickup", requireWorkshopAuth, async (req, res) => {
+  app.post("/api/network/orders/:id/pickup", requireWorkshopFullAuth, async (req, res) => {
     const id = String(req.params.id);
     const type = String((req.body as { type?: string })?.type ?? "").trim();
 
@@ -268,14 +268,14 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
     res.status(400).json({ error: "Unbekannter Typ. Erlaubt: bar, ueberweisung, sumup_link, sumup_complete." });
   });
 
-  app.get("/api/network/orders/:id/sumup-sync", requireWorkshopAuth, async (req, res) => {
+  app.get("/api/network/orders/:id/sumup-sync", requireWorkshopFullAuth, async (req, res) => {
     const id = String(req.params.id);
     const out = await syncNetworkOrderPaymentFromSumUp(db, id);
     res.json(out);
   });
 
   /** Bestellliste als Klartext (Händler / manuelle Bestellung). */
-  app.get("/api/network/orders/:id/order-list.txt", requireWorkshopAuth, (req, res) => {
+  app.get("/api/network/orders/:id/order-list.txt", requireWorkshopFullAuth, (req, res) => {
     const id = String(req.params.id);
     const rows = db
       .prepare(
@@ -295,7 +295,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
   });
 
   // ── Zahlungsstatus manuell ──────────────────────────────────────────────
-  app.patch("/api/network/orders/:id/payment", requireWorkshopAuth, async (req, res) => {
+  app.patch("/api/network/orders/:id/payment", requireWorkshopFullAuth, async (req, res) => {
     const id = String(req.params.id);
     const ps = String(req.body?.payment_status ?? "");
     if (ps !== "offen" && ps !== "bezahlt") { res.status(400).json({ error: "Ungültig" }); return; }
@@ -316,12 +316,12 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
   });
 
   // ── Admin-Einstellungen ─────────────────────────────────────────────────
-  app.get("/api/network/admin/devices", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/network/admin/devices", requireWorkshopFullAuth, (_req, res) => {
     const devices = db.prepare(`SELECT * FROM network_devices ORDER BY type, model`).all();
     res.json({ devices });
   });
 
-  app.post("/api/network/admin/devices", requireWorkshopAuth, (req, res) => {
+  app.post("/api/network/admin/devices", requireWorkshopFullAuth, (req, res) => {
     const b = req.body ?? {};
     const type = String(b.type ?? "").trim();
     const brand = String(b.brand ?? "AVM").trim() || "AVM";
@@ -343,7 +343,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
     res.status(201).json({ id });
   });
 
-  app.patch("/api/network/admin/devices/:id", requireWorkshopAuth, (req, res) => {
+  app.patch("/api/network/admin/devices/:id", requireWorkshopFullAuth, (req, res) => {
     const id = String(req.params.id);
     const exists = db.prepare(`SELECT id FROM network_devices WHERE id = ?`).get(id);
     if (!exists) {
@@ -385,7 +385,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
     "network_dealer_order_url",
   ] as const;
 
-  app.get("/api/network/admin/settings", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/network/admin/settings", requireWorkshopFullAuth, (_req, res) => {
     const settings: Record<string, string> = {};
     for (const key of ADMIN_KEYS) {
       const row = db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(key) as { value: string } | undefined;
@@ -394,7 +394,7 @@ export function registerNetworkRoutes(app: Express, db: Database.Database): void
     res.json({ settings });
   });
 
-  app.put("/api/network/admin/settings", requireWorkshopAuth, (req, res) => {
+  app.put("/api/network/admin/settings", requireWorkshopFullAuth, (req, res) => {
     const body = req.body?.settings as Record<string, string> | undefined;
     if (!body || typeof body !== "object") { res.status(400).json({ error: "settings-Objekt fehlt" }); return; }
     const upsert = db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`);

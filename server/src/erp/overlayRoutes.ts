@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type Database from "better-sqlite3";
-import { requireWorkshopAuth } from "../lib/workshopAuth.js";
+import { requireWorkshopFullAuth } from "../lib/workshopAuth.js";
 import { generateDatevExport, datevExportPreview } from "../lib/datevExport.js";
 
 /**
@@ -8,7 +8,7 @@ import { generateDatevExport, datevExportPreview } from "../lib/datevExport.js";
  * Keine neuen Kern-Tabellen, keine Änderung am Annahme-/Werkstatt-Flow.
  */
 export function registerErpOverlayRoutes(app: Express, db: Database.Database): void {
-  app.get("/api/erp/overview", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/erp/overview", requireWorkshopFullAuth, (_req, res) => {
     const customers = db.prepare(`SELECT COUNT(*) AS c FROM customers`).get() as { c: number };
     const invoices = db.prepare(`SELECT COUNT(*) AS c FROM invoices`).get() as { c: number };
     const repairs = db.prepare(`SELECT COUNT(*) AS c FROM repairs`).get() as { c: number };
@@ -34,7 +34,7 @@ export function registerErpOverlayRoutes(app: Express, db: Database.Database): v
     });
   });
 
-  app.get("/api/erp/customers", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/erp/customers", requireWorkshopFullAuth, (_req, res) => {
     const rows = db
       .prepare(
         `SELECT id, name, email, phone, address, created_at FROM customers
@@ -44,7 +44,7 @@ export function registerErpOverlayRoutes(app: Express, db: Database.Database): v
     res.json({ source: "customers", readOnly: true, rows });
   });
 
-  app.get("/api/erp/invoices", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/erp/invoices", requireWorkshopFullAuth, (_req, res) => {
     const rows = db
       .prepare(
         `SELECT i.id, i.repair_id, i.invoice_number, i.total_cents, i.payment_status, i.created_at AS invoice_created_at,
@@ -61,7 +61,7 @@ export function registerErpOverlayRoutes(app: Express, db: Database.Database): v
     res.json({ source: "invoices", readOnly: true, rows });
   });
 
-  app.get("/api/erp/repairs-financial", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/erp/repairs-financial", requireWorkshopFullAuth, (_req, res) => {
     const rows = db
       .prepare(
         `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method,
@@ -79,7 +79,7 @@ export function registerErpOverlayRoutes(app: Express, db: Database.Database): v
    * DATEV Buchungsstapel – Vorschau (Zusammenfassung für Zeitraum, kein CSV).
    * Query: ?from=YYYY-MM-DD&to=YYYY-MM-DD
    */
-  app.get("/api/erp/datev/preview", requireWorkshopAuth, (req, res) => {
+  app.get("/api/erp/datev/preview", requireWorkshopFullAuth, (req, res) => {
     const from = String(req.query.from ?? "").trim();
     const to = String(req.query.to ?? "").trim();
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
@@ -94,7 +94,7 @@ export function registerErpOverlayRoutes(app: Express, db: Database.Database): v
    * Rein lesend – Originaldaten werden nicht verändert.
    * Query: ?from=YYYY-MM-DD&to=YYYY-MM-DD
    */
-  app.get("/api/erp/datev/export.csv", requireWorkshopAuth, (req, res) => {
+  app.get("/api/erp/datev/export.csv", requireWorkshopFullAuth, (req, res) => {
     const from = String(req.query.from ?? "").trim();
     const to = String(req.query.to ?? "").trim();
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {

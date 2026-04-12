@@ -100,6 +100,18 @@ CREATE TABLE IF NOT EXISTS repair_media (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS repair_logs (
+  id TEXT PRIMARY KEY,
+  repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,
+  logged_at TEXT NOT NULL DEFAULT (datetime('now')),
+  action_type TEXT NOT NULL,
+  description TEXT NOT NULL,
+  duration_minutes INTEGER,
+  created_by TEXT NOT NULL DEFAULT 'workshop'
+);
+
+CREATE INDEX IF NOT EXISTS idx_repair_logs_repair ON repair_logs(repair_id);
+
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,

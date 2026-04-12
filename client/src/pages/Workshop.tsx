@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { fetchWorkshop } from "../api";
-import { formatDeBerlinDateOnly } from "../lib/formatBerlin";
+import { formatDeBerlin, formatDeBerlinDateOnly } from "../lib/formatBerlin";
+import { parseScanToTrackingCode } from "../lib/trackingScan";
 import { RtShell } from "../components/RtShell";
 import { TapToPayPhoneAnimation } from "../components/TapToPayPhoneAnimation";
 import { useWorkshopGate } from "../useWorkshopGate";
@@ -35,9 +36,19 @@ const STATUSES = [
   "abgeholt",
 ];
 
+type RepairLogRow = {
+  id: string;
+  timestamp: string;
+  action_type: string;
+  description: string;
+  duration_minutes: number | null;
+  created_by?: string;
+};
+
 type RepairDetailPayload = {
   repair: Record<string, unknown>;
   services?: { code: string; name: string; price_cents: number; category?: string }[];
+  logs?: RepairLogRow[];
   parts: {
     id: string;
     name: string;
@@ -57,6 +68,14 @@ type RepairDetailPayload = {
 function euroFromCents(cents: number): string {
   return `${(cents / 100).toFixed(2).replace(".", ",")} €`;
 }
+
+const LOG_ACTION_PRESETS = [
+  "Diagnose durchgeführt",
+  "Reparatur durchgeführt",
+  "Kunde informiert",
+  "Ersatzteil bestellt / bearbeitet",
+  "Software / Einrichtung",
+] as const;
 
 export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: string }) {
   const { gate, loginPass, setLoginPass, loginErr, tryLogin, logout } = useWorkshopGate();
@@ -79,6 +98,15 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   } | null>(null);
   const [pickupErr, setPickupErr] = useState<string | null>(null);
   const [pdfRegenBusy, setPdfRegenBusy] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [scanField, setScanField] = useState("");
+  const [scanErr, setScanErr] = useState<string | null>(null);
+  const [logPreset, setLogPreset] = useState<string>(LOG_ACTION_PRESETS[0]);
+  const [logCustomAction, setLogCustomAction] = useState("");
+  const [logDescription, setLogDescription] = useState("");
+  const [logDuration, setLogDuration] = useState("");
+  const [logBusy, setLogBusy] = useState(false);
+  const scanConsumedRef = useRef<string | null>(null);
 
   const PART_STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "bestellt", label: "Bestellt" },
@@ -107,6 +135,62 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   useEffect(() => {
     if (gate === "ok") void refresh();
   }, [gate, refresh]);
+
+  const openRepairByTrackingCode = useCallback(
+    async (raw: string): Promise<boolean> => {
+      const code = parseScanToTrackingCode(raw);
+      if (!code) {
+        setScanErr("Ungültiger Code oder Link.");
+        return false;
+      }
+      setScanErr(null);
+      try {
+        const row = await fetchWorkshop<{ id: string; tracking_code: string }>(
+          `/api/repairs/by-tracking/${encodeURIComponent(code)}`
+        );
+        const list = (await refresh()) ?? [];
+        const fromList = list.find((r) => r.id === row.id);
+        if (fromList) {
+          setSelected(fromList);
+          return true;
+        }
+        setScanErr("Auftrag nicht in der Liste.");
+        return false;
+      } catch (e) {
+        setScanErr(String(e));
+        return false;
+      }
+    },
+    [refresh]
+  );
+
+  useEffect(() => {
+    if (gate !== "ok") return;
+    const raw = searchParams.get("scan");
+    if (!raw) {
+      scanConsumedRef.current = null;
+      return;
+    }
+    if (scanConsumedRef.current === raw) return;
+    scanConsumedRef.current = raw;
+    let cancelled = false;
+    void (async () => {
+      try {
+        let decoded = raw;
+        try {
+          decoded = decodeURIComponent(raw);
+        } catch {
+          decoded = raw;
+        }
+        await openRepairByTrackingCode(decoded);
+      } finally {
+        if (!cancelled) setSearchParams({}, { replace: true });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [gate, searchParams, setSearchParams, openRepairByTrackingCode]);
 
   useEffect(() => {
     if (!selected) {
@@ -217,6 +301,37 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     if (next) setSelected(next);
     const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${repairId}`);
     setDetail(d);
+  };
+
+  const submitLog = async () => {
+    if (!selected) return;
+    const action_type = logPreset === "__custom__" ? logCustomAction.trim() : logPreset;
+    const description = logDescription.trim();
+    if (!action_type || !description) return;
+    setLogBusy(true);
+    try {
+      const body: { action_type: string; description: string; duration_minutes?: number } = {
+        action_type,
+        description,
+      };
+      if (logDuration.trim()) {
+        const n = Number(logDuration.replace(",", "."));
+        if (Number.isFinite(n) && n >= 0) body.duration_minutes = Math.round(n);
+      }
+      await fetchWorkshop(`/api/repairs/${selected.id}/log`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setLogDescription("");
+      setLogDuration("");
+      if (logPreset === "__custom__") setLogCustomAction("");
+      const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${selected.id}`);
+      setDetail(d);
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setLogBusy(false);
+    }
   };
 
   const closePickupModal = () => {
@@ -356,7 +471,29 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     >
       <div className="grid lg:grid-cols-2 gap-6">
         <section className="rt-panel rt-panel-cyan min-h-[200px]">
-          <h2 className="text-sm font-bold text-white mb-4 tracking-wide">Auftragsliste</h2>
+          <h2 className="text-sm font-bold text-white mb-3 tracking-wide">Auftragsliste</h2>
+          <div className="mb-3 space-y-1">
+            <label className="block text-[11px] uppercase tracking-wide text-cyan-200/80">QR / Tracking (Scanner)</label>
+            <input
+              className="rt-input-neon font-mono text-sm w-full"
+              placeholder="https://…/track/… oder RT-…"
+              value={scanField}
+              onChange={(e) => {
+                setScanField(e.target.value);
+                setScanErr(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                const v = scanField;
+                void (async () => {
+                  if (await openRepairByTrackingCode(v)) setScanField("");
+                })();
+              }}
+              autoComplete="off"
+            />
+            {scanErr && <p className="text-xs text-red-400">{scanErr}</p>}
+          </div>
           <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
             {rows.map((r) => (
               <button
@@ -528,6 +665,73 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                     <span className="font-mono text-emerald-200/90">{euroFromCents(detail.repair.total_cents as number)}</span>
                   </p>
                 )}
+              </div>
+              <div className="rounded-xl border border-violet-500/25 bg-violet-950/20 px-3 py-3 space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-200/90">Arbeitsprotokoll</p>
+                <ul className="space-y-2 max-h-[220px] overflow-y-auto text-sm text-zinc-300 pr-1">
+                  {(detail.logs ?? []).length === 0 ? (
+                    <li className="text-xs text-zinc-500">Noch keine Einträge.</li>
+                  ) : (
+                    [...(detail.logs ?? [])]
+                      .slice()
+                      .reverse()
+                      .map((lg) => (
+                        <li key={lg.id} className="border-b border-white/5 pb-2">
+                          <p className="text-[11px] text-zinc-500 font-mono">
+                            {formatDeBerlin(lg.timestamp, { dateStyle: "short", timeStyle: "short" })}
+                            {lg.duration_minutes != null ? ` · ${lg.duration_minutes} Min.` : ""}
+                          </p>
+                          <p className="text-violet-200/95 font-medium">{lg.action_type}</p>
+                          <p className="text-zinc-400 text-xs whitespace-pre-wrap">{lg.description}</p>
+                        </li>
+                      ))
+                  )}
+                </ul>
+                <div className="space-y-2 pt-1 border-t border-white/10">
+                  <label className="block text-[11px] text-zinc-500">Tätigkeit</label>
+                  <select
+                    className="rt-input-neon w-full !min-h-[44px]"
+                    value={logPreset}
+                    onChange={(e) => setLogPreset(e.target.value)}
+                  >
+                    {LOG_ACTION_PRESETS.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                    <option value="__custom__">Sonstiges (Freitext)</option>
+                  </select>
+                  {logPreset === "__custom__" && (
+                    <input
+                      className="rt-input-neon w-full"
+                      placeholder="Kurzbezeichnung der Tätigkeit"
+                      value={logCustomAction}
+                      onChange={(e) => setLogCustomAction(e.target.value)}
+                    />
+                  )}
+                  <textarea
+                    className="rt-input-neon w-full min-h-[72px] text-sm resize-y"
+                    placeholder="Beschreibung der Arbeit…"
+                    value={logDescription}
+                    onChange={(e) => setLogDescription(e.target.value)}
+                    rows={3}
+                  />
+                  <input
+                    className="rt-input-neon w-full font-mono text-sm"
+                    placeholder="Dauer in Min. (optional)"
+                    value={logDuration}
+                    onChange={(e) => setLogDuration(e.target.value)}
+                    inputMode="numeric"
+                  />
+                  <button
+                    type="button"
+                    className="rt-btn-confirm w-full min-h-[44px] text-sm disabled:opacity-50"
+                    disabled={logBusy}
+                    onClick={() => void submitLog()}
+                  >
+                    {logBusy ? "Speichern…" : "Eintrag speichern"}
+                  </button>
+                </div>
               </div>
               <div>
                 <p className="text-sm font-semibold text-violet-300 mb-2">Ersatzteil hinzufügen</p>

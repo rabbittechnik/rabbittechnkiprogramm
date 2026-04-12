@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Express, Request, Response } from "express";
+import type { Express, Response } from "express";
+import { assertBenchStatusAllowed, isBenchRequest } from "./lib/benchRepairGuards.js";
 import { nanoid } from "nanoid";
 import type Database from "better-sqlite3";
 import QRCode from "qrcode";
@@ -28,9 +29,12 @@ import { makeTrackingCode } from "./lib/trackingCode.js";
 import { resolveDeviceImage } from "./lib/deviceImage.js";
 import {
   isWorkshopPasswordConfigured,
+  isBenchPasswordConfigured,
   verifyWorkshopPassword,
+  verifyBenchPassword,
   signWorkshopToken,
   requireWorkshopAuth,
+  requireWorkshopFullAuth,
 } from "./lib/workshopAuth.js";
 import {
   sendRepairAcceptedEmail,
@@ -140,18 +144,18 @@ export function registerRoutes(app: Express, db: Database.Database) {
     });
   });
 
-  app.get("/api/stats/overview", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/stats/overview", requireWorkshopFullAuth, (_req, res) => {
     res.json(getWorkshopStatsOverview(db));
   });
 
-  app.get("/api/customers", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/customers", requireWorkshopFullAuth, (_req, res) => {
     const rows = db
       .prepare(`SELECT id, name, email, phone, address, created_at FROM customers ORDER BY datetime(created_at) DESC LIMIT 500`)
       .all();
     res.json(rows);
   });
 
-  app.post("/api/customers", requireWorkshopAuth, (req, res) => {
+  app.post("/api/customers", requireWorkshopFullAuth, (req, res) => {
     const name = String(req.body?.name ?? "").trim();
     if (!name) {
       res.status(400).json({ error: "Name fehlt" });
@@ -170,7 +174,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** Reparatur-Historie pro Kunde (Werkstatt) – inkl. Link zur gespeicherten Annahme-PDF */
-  app.get("/api/customers/:id/repairs", requireWorkshopAuth, (req, res) => {
+  app.get("/api/customers/:id/repairs", requireWorkshopFullAuth, (req, res) => {
     const cid = paramStr(req.params.id);
     const exists = db.prepare(`SELECT id FROM customers WHERE id = ?`).get(cid);
     if (!exists) {
@@ -190,24 +194,89 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.get("/api/auth/status", (_req, res) => {
-    res.json({ workshopAuthRequired: isWorkshopPasswordConfigured() });
+    res.json({
+      workshopAuthRequired: isWorkshopPasswordConfigured(),
+      benchAuthConfigured: isBenchPasswordConfigured(),
+    });
   });
 
   app.post("/api/auth/login", (req, res) => {
     if (!isWorkshopPasswordConfigured()) {
-      res.json({ token: null as string | null, workshopAuthRequired: false });
+      res.json({
+        token: null as string | null,
+        workshopAuthRequired: false,
+        benchAuthConfigured: isBenchPasswordConfigured(),
+      });
       return;
     }
     const password = String(req.body?.password ?? "");
+    const wantBench = String((req.body as { role?: string })?.role ?? "").toLowerCase() === "bench";
+    if (wantBench) {
+      if (!isBenchPasswordConfigured()) {
+        res.status(503).json({
+          error: "Montage-Anmeldung nicht eingerichtet (RABBIT_BENCH_PASSWORD in der Server-Umgebung setzen).",
+        });
+        return;
+      }
+      if (!verifyBenchPassword(password)) {
+        res.status(401).json({ error: "Ungültiges Montage-Passwort" });
+        return;
+      }
+      res.json({
+        token: signWorkshopToken("bench"),
+        role: "bench" as const,
+        workshopAuthRequired: true,
+        benchAuthConfigured: true,
+        expiresInDays: 7,
+      });
+      return;
+    }
     if (!verifyWorkshopPassword(password)) {
       res.status(401).json({ error: "Ungültiges Passwort" });
       return;
     }
-    res.json({ token: signWorkshopToken(), workshopAuthRequired: true, expiresInDays: 7 });
+    res.json({
+      token: signWorkshopToken("workshop"),
+      role: "workshop" as const,
+      workshopAuthRequired: true,
+      benchAuthConfigured: isBenchPasswordConfigured(),
+      expiresInDays: 7,
+    });
+  });
+
+  /** Auftragsliste: Werkstatt voll; Montage ohne Preise/Zahlungsfelder, nur nicht abgeholt. */
+  app.get("/api/repairs", requireWorkshopAuth, (req, res) => {
+    if (isBenchRequest(req)) {
+      const rows = db
+        .prepare(
+          `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.updated_at, r.created_at, r.is_test,
+           c.name AS customer_name, d.device_type, d.brand, d.model
+           FROM repairs r
+           JOIN customers c ON c.id = r.customer_id
+           JOIN devices d ON d.id = r.device_id
+           WHERE r.status != 'abgeholt'
+           ORDER BY r.created_at DESC`
+        )
+        .all();
+      res.json(rows);
+      return;
+    }
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
+         r.is_test,
+         c.name as customer_name, d.device_type, d.brand, d.model
+         FROM repairs r
+         JOIN customers c ON c.id = r.customer_id
+         JOIN devices d ON d.id = r.device_id
+         ORDER BY r.created_at DESC`
+      )
+      .all();
+    res.json(rows);
   });
 
   /** Probed-Mail (nur mit Werkstatt-Token); prüft SMTP inkl. Gmail-App-Passwort */
-  app.post("/api/mail/test", requireWorkshopAuth, async (req, res) => {
+  app.post("/api/mail/test", requireWorkshopFullAuth, async (req, res) => {
     const to = String(req.body?.to ?? "").trim();
     if (!to) {
       res.status(400).json({ error: "Empfänger-Adresse (to) fehlt" });
@@ -222,7 +291,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** Manueller Snapshot: SQLite + Rechnungs-/Annahme-PDFs + Uploads → Datenwurzel/backups/… */
-  app.post("/api/system/backup", requireWorkshopAuth, async (_req, res) => {
+  app.post("/api/system/backup", requireWorkshopFullAuth, async (_req, res) => {
     const r = await runDataBackup(db);
     if (!r.ok) {
       res.status(500).json({ ok: false, error: r.error });
@@ -494,10 +563,30 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
   });
 
+  app.get("/api/repairs/by-tracking/:code", requireWorkshopAuth, (req, res) => {
+    const code = paramStr(req.params.code).trim();
+    if (!code) {
+      res.status(400).json({ error: "Code fehlt" });
+      return;
+    }
+    const row = db
+      .prepare(`SELECT id, tracking_code, status FROM repairs WHERE tracking_code = ?`)
+      .get(code) as { id: string; tracking_code: string; status: string } | undefined;
+    if (!row) {
+      res.status(404).json({ error: "Nicht gefunden" });
+      return;
+    }
+    res.json(row);
+  });
+
   app.get("/api/repairs/:id", requireWorkshopAuth, (req, res) => {
     const id = paramStr(req.params.id);
-    const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id);
+    const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!repair) {
+      res.status(404).json({ error: "Nicht gefunden" });
+      return;
+    }
+    if (isBenchRequest(req) && String(repair.status) === "abgeholt") {
       res.status(404).json({ error: "Nicht gefunden" });
       return;
     }
@@ -512,7 +601,82 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const parts = db.prepare(`SELECT * FROM repair_parts WHERE repair_id = ?`).all(id);
     const media = db.prepare(`SELECT id, kind, file_path, mime, created_at FROM repair_media WHERE repair_id = ?`).all(id);
     const revenue_breakdown = computeRevenueBreakdownForRepairIds(db, [id]);
-    res.json({ repair, customer, device, services, parts, media, revenue_breakdown });
+    const logs = db
+      .prepare(
+        `SELECT id, logged_at AS timestamp, action_type, description, duration_minutes, created_by
+         FROM repair_logs WHERE repair_id = ? ORDER BY datetime(logged_at) DESC, id DESC`
+      )
+      .all(id);
+
+    if (isBenchRequest(req)) {
+      const { total_cents: _tc, payment_status: _ps, payment_method: _pm, payment_due_at: _pda, payment_paid_at: _ppa, sumup_checkout_id: _sc, sumup_checkout_url: _su, sumup_channel: _sch, ...repairRest } = repair;
+      const cust = customer as Record<string, unknown> | undefined;
+      const customerBench = cust
+        ? { id: cust.id, name: cust.name, phone: cust.phone }
+        : null;
+      const servicesBench = (services as { code: string; name: string; category: string }[]).map((s) => ({
+        code: s.code,
+        name: s.name,
+        category: s.category,
+      }));
+      const partsBench = (parts as Record<string, unknown>[]).map((p) => {
+        const { purchase_cents: _pc, sale_cents: _sc2, ...rest } = p;
+        return rest;
+      });
+      res.json({
+        repair: repairRest,
+        customer: customerBench,
+        device,
+        services: servicesBench,
+        parts: partsBench,
+        media,
+        logs,
+      });
+      return;
+    }
+
+    res.json({ repair, customer, device, services, parts, media, revenue_breakdown, logs });
+  });
+
+  app.post("/api/repairs/:id/log", requireWorkshopAuth, (req, res) => {
+    const id = paramStr(req.params.id);
+    const row = db.prepare(`SELECT id, status FROM repairs WHERE id = ?`).get(id) as { id: string; status: string } | undefined;
+    if (!row) {
+      res.status(404).json({ error: "Nicht gefunden" });
+      return;
+    }
+    if (isBenchRequest(req) && row.status !== "in_reparatur") {
+      res.status(403).json({ error: "Protokoll nur während „In Reparatur“ (zuerst Label scannen / Status setzen)." });
+      return;
+    }
+    const action_type = String(req.body?.action_type ?? "").trim();
+    const description = String(req.body?.description ?? "").trim();
+    const dmRaw = req.body?.duration_minutes;
+    let duration_minutes: number | null = null;
+    if (dmRaw !== undefined && dmRaw !== null && String(dmRaw).trim() !== "") {
+      const n = Number(dmRaw);
+      if (!Number.isFinite(n) || n < 0 || n > 24 * 60) {
+        res.status(400).json({ error: "Ungültige Dauer (Minuten)" });
+        return;
+      }
+      duration_minutes = Math.round(n);
+    }
+    if (!action_type || !description) {
+      res.status(400).json({ error: "Tätigkeit und Beschreibung erforderlich" });
+      return;
+    }
+    const logId = nanoid();
+    const createdBy = isBenchRequest(req) ? "bench" : "workshop";
+    db.prepare(
+      `INSERT INTO repair_logs (id, repair_id, logged_at, action_type, description, duration_minutes, created_by)
+       VALUES (?, ?, datetime('now'), ?, ?, ?, ?)`
+    ).run(logId, id, action_type, description, duration_minutes, createdBy);
+    const log = db
+      .prepare(
+        `SELECT id, logged_at AS timestamp, action_type, description, duration_minutes, created_by FROM repair_logs WHERE id = ?`
+      )
+      .get(logId);
+    res.status(201).json({ log });
   });
 
   app.patch("/api/repairs/:id/status", requireWorkshopAuth, async (req, res) => {
@@ -552,7 +716,26 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.json({ repair });
       return;
     }
-    const r = db.prepare(`UPDATE repairs SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, id);
+    if (isBenchRequest(req)) {
+      const g = assertBenchStatusAllowed(db, id, previous.status, status);
+      if (!g.ok) {
+        res.status(403).json({ error: g.error });
+        return;
+      }
+    }
+    const sinceRow = db
+      .prepare(`SELECT in_reparatur_since FROM repairs WHERE id = ?`)
+      .get(id) as { in_reparatur_since: string | null } | undefined;
+    let nextSince: string | null = sinceRow?.in_reparatur_since ?? null;
+    const nowT = (db.prepare(`SELECT datetime('now') AS t`).get() as { t: string }).t;
+    if (status === "in_reparatur" && previous.status !== "in_reparatur") {
+      nextSince = nowT;
+    } else if (previous.status === "in_reparatur" && status !== "in_reparatur") {
+      nextSince = null;
+    }
+    const r = db
+      .prepare(`UPDATE repairs SET status = ?, updated_at = datetime('now'), in_reparatur_since = ? WHERE id = ?`)
+      .run(status, nextSince, id);
     if (r.changes === 0) {
       res.status(404).json({ error: "Nicht gefunden" });
       return;
@@ -576,7 +759,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     res.json({ repair });
   });
 
-  app.patch("/api/repairs/:id/payment", requireWorkshopAuth, (req, res) => {
+  app.patch("/api/repairs/:id/payment", requireWorkshopFullAuth, (req, res) => {
     const id = paramStr(req.params.id);
     const ps = String(req.body?.payment_status ?? "");
     if (ps !== "offen" && ps !== "bezahlt") {
@@ -598,7 +781,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
    * Abholung am Tablet: Zahlungsart wählen → Status/Rechnung anpassen.
    * SumUp Online: type=sumup_link (QR/URL). Tap to Pay: nur manuell im UI; Abschluss mit type=sumup_complete und sumup_channel=tap_to_pay.
    */
-  app.post("/api/repairs/:id/pickup", requireWorkshopAuth, async (req, res) => {
+  app.post("/api/repairs/:id/pickup", requireWorkshopFullAuth, async (req, res) => {
     const id = paramStr(req.params.id);
     const type = String((req.body as { type?: string })?.type ?? "").trim();
 
@@ -854,11 +1037,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
   };
 
-  app.post("/api/create-sumup-checkout", requireWorkshopAuth, postCreateSumupCheckout);
-  app.post("/create-sumup-checkout", requireWorkshopAuth, postCreateSumupCheckout);
+  app.post("/api/create-sumup-checkout", requireWorkshopFullAuth, postCreateSumupCheckout);
+  app.post("/create-sumup-checkout", requireWorkshopFullAuth, postCreateSumupCheckout);
 
   /** Tablet: SumUp-Status per API nachziehen (Webhook-Fallback / sofortige Aktualisierung). */
-  app.get("/api/repairs/:id/sumup-sync", requireWorkshopAuth, async (req, res) => {
+  app.get("/api/repairs/:id/sumup-sync", requireWorkshopFullAuth, async (req, res) => {
     const id = paramStr(req.params.id);
     const exists = db.prepare(`SELECT id FROM repairs WHERE id = ?`).get(id);
     if (!exists) {
@@ -870,7 +1053,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** Rechnungen & Zahlungsübersicht (Werkstatt) */
-  app.get("/api/invoices", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/invoices", requireWorkshopFullAuth, (_req, res) => {
     const invoices = db
       .prepare(
         `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at,
@@ -919,7 +1102,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** Storno- / Korrektur-PDF (Werkstatt) – alle document_kind. */
-  app.get("/api/invoices/:id/document.pdf", requireWorkshopAuth, (req, res) => {
+  app.get("/api/invoices/:id/document.pdf", requireWorkshopFullAuth, (req, res) => {
     const invId = paramStr(req.params.id);
     const inv = getInvoiceById(db, invId);
     if (!inv?.pdf_path || !fs.existsSync(inv.pdf_path)) {
@@ -930,7 +1113,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** GoBD: Storno-Rechnung zur referenzierten finalen Ausgangsrechnung. */
-  app.post("/api/invoices/:id/storno", requireWorkshopAuth, async (req, res) => {
+  app.post("/api/invoices/:id/storno", requireWorkshopFullAuth, async (req, res) => {
     const invId = paramStr(req.params.id);
     const src = getInvoiceById(db, invId);
     if (!src) {
@@ -999,7 +1182,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** GoBD: Korrekturrechnung (Differenzbetrag, referenziert Ausgangsrechnung). */
-  app.post("/api/invoices/:id/korrektur", requireWorkshopAuth, async (req, res) => {
+  app.post("/api/invoices/:id/korrektur", requireWorkshopFullAuth, async (req, res) => {
     const invId = paramStr(req.params.id);
     const src = getInvoiceById(db, invId);
     if (!src) {
@@ -1085,8 +1268,12 @@ export function registerRoutes(app: Express, db: Database.Database) {
       res.status(400).json({ error: "Ungültiger Teile-Status (bestellt oder vor_ort)" });
       return;
     }
-    const purchase_cents = Math.round(Number(req.body?.purchase_cents ?? 0));
-    const sale_cents = Math.round(Number(req.body?.sale_cents ?? 0));
+    let purchase_cents = Math.round(Number(req.body?.purchase_cents ?? 0));
+    let sale_cents = Math.round(Number(req.body?.sale_cents ?? 0));
+    if (isBenchRequest(req)) {
+      purchase_cents = 0;
+      sale_cents = 0;
+    }
     let barcode: string | null = null;
     const rawBc = req.body?.barcode;
     if (rawBc != null && String(rawBc).trim() !== "") {
@@ -1103,13 +1290,18 @@ export function registerRoutes(app: Express, db: Database.Database) {
     ).run(pid, repairId, null, name, purchase_cents, sale_cents, initialStatus, barcode);
     recalculateRepairTotal(db, repairId);
     syncRepairStatusForParts(db, repairId);
-    const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(pid);
     queueCustomerRepairNotification(
       db,
       repairId,
       `Neues Ersatzteil: „${name}“ – ${partStatusLabelDe(initialStatus)}`
     );
     scheduleSyncRepairOrderPdfs(db, repairId, req);
+    const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(pid) as Record<string, unknown>;
+    if (isBenchRequest(req)) {
+      const { purchase_cents: _pc, sale_cents: _sc, ...pub } = part;
+      res.status(201).json({ part: pub });
+      return;
+    }
     res.status(201).json({ part });
   });
 
@@ -1173,7 +1365,6 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     syncRepairStatusForParts(db, repairId);
-    const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(partId);
     if (wantStatus && prevRow.status !== nextStatus) {
       const zusatz = `Ersatzteil „${prevRow.name}“: ${partStatusLabelDe(nextStatus)}${
         prevRow.status ? ` (vorher: ${partStatusLabelDe(prevRow.status)})` : ""
@@ -1181,10 +1372,16 @@ export function registerRoutes(app: Express, db: Database.Database) {
       queueCustomerRepairNotification(db, repairId, zusatz);
     }
     scheduleSyncRepairOrderPdfs(db, repairId, req);
+    const part = db.prepare(`SELECT * FROM repair_parts WHERE id = ?`).get(partId) as Record<string, unknown>;
+    if (isBenchRequest(req)) {
+      const { purchase_cents: _pc, sale_cents: _sc, ...pub } = part;
+      res.json({ part: pub });
+      return;
+    }
     res.json({ part });
   });
 
-  app.get("/api/lager/parts", requireWorkshopAuth, (_req, res) => {
+  app.get("/api/lager/parts", requireWorkshopFullAuth, (_req, res) => {
     const parts = db
       .prepare(
         `SELECT rp.id, rp.repair_id, rp.name, rp.status, rp.sale_cents, rp.purchase_cents, rp.barcode, rp.created_at,
@@ -1203,7 +1400,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     res.json({ parts });
   });
 
-  app.post("/api/lager/scan-barcode", requireWorkshopAuth, (req, res) => {
+  app.post("/api/lager/scan-barcode", requireWorkshopFullAuth, (req, res) => {
     const barcode = String(req.body?.barcode ?? "").trim();
     if (!barcode) {
       res.status(400).json({ error: "Barcode leer" });
@@ -1282,8 +1479,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  /** Öffentliches Tracking (?sumup_sync=1 = SumUp-Status per API nachziehen, Fallback zum Webhook) */
-  app.get("/api/track/:code", async (req, res) => {
+  /** Öffentliches Tracking (?sumup_sync=1 = SumUp-Status per API nachziehen, Fallback zum Webhook). Alias: GET /api/repair/:code */
+  const handlePublicTrackByCode = async (req: Request, res: Response) => {
     const code = paramStr(req.params.code).trim();
     const trackSql = `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.payment_due_at,
                 r.sumup_checkout_url, r.sumup_channel, r.payment_paid_at,
@@ -1360,6 +1557,12 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const parts = db
       .prepare(`SELECT name, status, sale_cents FROM repair_parts WHERE repair_id = ?`)
       .all(repairIdForParts) as { name: string; status: string; sale_cents: number }[];
+    const logs = db
+      .prepare(
+        `SELECT logged_at AS timestamp, action_type, description, duration_minutes
+         FROM repair_logs WHERE repair_id = ? ORDER BY datetime(logged_at) ASC, id ASC`
+      )
+      .all(repairIdForParts) as { timestamp: string; action_type: string; description: string; duration_minutes: number | null }[];
     const pendingParts = parts.some((p) => p.status === "bestellt" || p.status === "unterwegs");
     const anyHere = parts.some(
       (p) => p.status === "angekommen" || p.status === "eingebaut" || p.status === "vor_ort"
@@ -1389,8 +1592,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
       transfer_verwendungszweck: transferPurposeFromTracking(repair.tracking_code),
       parts,
       message,
+      logs,
     });
-  });
+  };
+  app.get("/api/track/:code", handlePublicTrackByCode);
+  app.get("/api/repair/:code", handlePublicTrackByCode);
 
   /** Öffentlich per Link nach Annahme (kein Workshop-Login auf dem Tablet) */
   app.get("/api/repairs/:id/invoice.pdf", async (req, res) => {
@@ -1414,7 +1620,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** Gespeicherte Auftragsbestätigung (PDF mit Unterschrift) – nur Werkstatt */
-  app.get("/api/repairs/:id/acceptance.pdf", requireWorkshopAuth, (req, res) => {
+  app.get("/api/repairs/:id/acceptance.pdf", requireWorkshopFullAuth, (req, res) => {
     const id = paramStr(req.params.id);
     const row = db.prepare(`SELECT acceptance_pdf_path FROM repairs WHERE id = ?`).get(id) as
       | { acceptance_pdf_path: string | null }
@@ -1477,7 +1683,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** PDFs neu erzeugen (A4 + Etikett). */
-  app.post("/api/repairs/:id/repair-order-pdf", requireWorkshopAuth, async (req, res) => {
+  app.post("/api/repairs/:id/repair-order-pdf", requireWorkshopFullAuth, async (req, res) => {
     const id = paramStr(req.params.id);
     const exists = db.prepare(`SELECT id FROM repairs WHERE id = ?`).get(id);
     if (!exists) {
