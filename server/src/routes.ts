@@ -255,7 +255,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
            JOIN customers c ON c.id = r.customer_id
            JOIN devices d ON d.id = r.device_id
            WHERE r.status != 'abgeholt'
-           ORDER BY r.created_at DESC`
+           ORDER BY r.created_at ASC, r.id ASC`
         )
         .all();
       res.json(rows);
@@ -269,7 +269,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
          FROM repairs r
          JOIN customers c ON c.id = r.customer_id
          JOIN devices d ON d.id = r.device_id
-         ORDER BY r.created_at DESC`
+         ORDER BY r.created_at ASC, r.id ASC`
       )
       .all();
     res.json(rows);

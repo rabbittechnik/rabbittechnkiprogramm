@@ -65,6 +65,9 @@ const LOG_ACTION_PRESETS = [
   "Software / Einrichtung",
 ] as const;
 
+/** Detailansicht automatisch schließen (gemeinsames Tablet). */
+const WORKSHOP_DETAIL_AUTO_CLOSE_MS = 30_000;
+
 export function WorkshopBench() {
   const { gate, loginPass, setLoginPass, loginErr, tryLogin, logout, noBenchHint } = useBenchGate();
 
@@ -121,6 +124,14 @@ export function WorkshopBench() {
     }
     void loadDetail(selected.id);
   }, [selected, loadDetail]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const t = window.setTimeout(() => {
+      setSelected(null);
+    }, WORKSHOP_DETAIL_AUTO_CLOSE_MS);
+    return () => window.clearTimeout(t);
+  }, [selected?.id]);
 
   const openRepairByTrackingCode = useCallback(
     async (raw: string): Promise<boolean> => {
@@ -191,6 +202,11 @@ export function WorkshopBench() {
     try {
       await fetchWorkshop(`/api/repairs/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
       const list = await refresh();
+      if (status === "fertig") {
+        setSelected(null);
+        setDetail(null);
+        return;
+      }
       if (selected?.id === id && list) {
         const row = list.find((r) => r.id === id);
         if (row) setSelected(row);

@@ -86,6 +86,9 @@ const LOG_ACTION_PRESETS = [
   "Software / Einrichtung",
 ] as const;
 
+/** Detailansicht automatisch schließen (gemeinsames Tablet). */
+const WORKSHOP_DETAIL_AUTO_CLOSE_MS = 30_000;
+
 /** Nach Abholung (Status `abgeholt`) nicht mehr in der Werkstatt-Liste. */
 function workshopListRows(data: Row[]): Row[] {
   return data.filter((r) => r.status !== "abgeholt");
@@ -243,9 +246,23 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       });
   }, [selected, logout]);
 
+  useEffect(() => {
+    if (!selected) return;
+    const t = window.setTimeout(() => {
+      setSelected(null);
+      setDetail(null);
+    }, WORKSHOP_DETAIL_AUTO_CLOSE_MS);
+    return () => window.clearTimeout(t);
+  }, [selected?.id]);
+
   const setStatus = async (id: string, status: string) => {
     await fetchWorkshop(`/api/repairs/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
     const list = await refresh();
+    if (status === "fertig" && selected?.id === id) {
+      setSelected(null);
+      setDetail(null);
+      return;
+    }
     if (selected?.id === id && list) {
       const row = list.find((r) => r.id === id);
       if (row) setSelected(row);
