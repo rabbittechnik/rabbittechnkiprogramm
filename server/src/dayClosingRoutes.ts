@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import type Database from "better-sqlite3";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { formatBerlinBusinessDayRangeDe } from "./lib/berlinCalendar.js";
+import { computeDayRevenueBreakdown } from "./lib/dayClosing.js";
 import {
   getRegisterOpeningCents,
   recalculateAllRegisterBalances,
@@ -65,6 +67,12 @@ export function registerDayClosingRoutes(app: Express, db: Database.Database): v
     } catch {
       transactions = [];
     }
-    res.json({ ...rest, transactions });
+    const revenue_breakdown = computeDayRevenueBreakdown(db, date);
+    res.json({
+      ...rest,
+      transactions,
+      business_period_de: formatBerlinBusinessDayRangeDe(date),
+      revenue_breakdown,
+    });
   });
 }

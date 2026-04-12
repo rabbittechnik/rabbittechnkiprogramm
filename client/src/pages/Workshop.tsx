@@ -9,6 +9,7 @@ import { useWorkshopGate } from "../useWorkshopGate";
 type Row = {
   id: string;
   tracking_code: string;
+  repair_order_number?: string | null;
   status: string;
   total_cents: number;
   payment_status: string;
@@ -34,22 +35,35 @@ const STATUSES = [
   "abgeholt",
 ];
 
+type RepairDetailPayload = {
+  repair: Record<string, unknown>;
+  services?: { code: string; name: string; price_cents: number; category?: string }[];
+  parts: {
+    id: string;
+    name: string;
+    status: string;
+    sale_cents: number;
+    purchase_cents: number;
+    barcode?: string | null;
+  }[];
+  revenue_breakdown?: {
+    teile_cents: number;
+    leistungen_cents: number;
+    anfahrt_cents: number;
+    by_category: { category_key: string; category_label_de: string; cents: number }[];
+  };
+};
+
+function euroFromCents(cents: number): string {
+  return `${(cents / 100).toFixed(2).replace(".", ",")} €`;
+}
+
 export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: string }) {
   const { gate, loginPass, setLoginPass, loginErr, tryLogin, logout } = useWorkshopGate();
 
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Row | null>(null);
-  const [detail, setDetail] = useState<{
-    repair: Record<string, unknown>;
-    parts: {
-      id: string;
-      name: string;
-      status: string;
-      sale_cents: number;
-      purchase_cents: number;
-      barcode?: string | null;
-    }[];
-  } | null>(null);
+  const [detail, setDetail] = useState<RepairDetailPayload | null>(null);
   const [partName, setPartName] = useState("");
   const [sale, setSale] = useState("");
   const [buy, setBuy] = useState("");
@@ -64,6 +78,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     hint: string;
   } | null>(null);
   const [pickupErr, setPickupErr] = useState<string | null>(null);
+  const [pdfRegenBusy, setPdfRegenBusy] = useState(false);
 
   const PART_STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "bestellt", label: "Bestellt" },
@@ -98,7 +113,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       setDetail(null);
       return;
     }
-    fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`)
+    fetchWorkshop<RepairDetailPayload>(`/api/repairs/${selected.id}`)
       .then(setDetail)
       .catch((e) => {
         const err = e as Error & { code?: string };
@@ -133,7 +148,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     setBuy("");
     setNewPartStatus("bestellt");
     setNewPartBarcode("");
-    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
+    const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${selected.id}`);
     setDetail(d);
     await refresh();
   };
@@ -144,7 +159,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       method: "PATCH",
       body: JSON.stringify({ status }),
     });
-    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
+    const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${selected.id}`);
     setDetail(d);
     await refresh();
   };
@@ -159,7 +174,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       method: "PATCH",
       body: JSON.stringify({ barcode: v || null }),
     });
-    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
+    const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${selected.id}`);
     setDetail(d);
     await refresh();
   };
@@ -172,8 +187,27 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     });
     await refresh();
     setSelected((prev) => (prev ? { ...prev, payment_status } : null));
-    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${selected.id}`);
+    const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${selected.id}`);
     setDetail(d);
+  };
+
+  const regenerateRepairOrderPdf = async () => {
+    if (!selected) return;
+    setPdfRegenBusy(true);
+    try {
+      await fetchWorkshop(`/api/repairs/${selected.id}/repair-order-pdf`, {
+        method: "POST",
+        body: "{}",
+        skipQueue: true,
+      });
+      const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${selected.id}`);
+      setDetail(d);
+      await refresh();
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setPdfRegenBusy(false);
+    }
   };
 
   const reloadSelectedFromServer = async (repairId: string) => {
@@ -181,7 +215,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     setRows(list);
     const next = list.find((x) => x.id === repairId);
     if (next) setSelected(next);
-    const d = await fetchWorkshop<typeof detail>(`/api/repairs/${repairId}`);
+    const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${repairId}`);
     setDetail(d);
   };
 
@@ -240,7 +274,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
           setRows(list);
           const next = list.find((x) => x.id === repairId);
           if (next) setSelected(next);
-          const d = await fetchWorkshop<typeof detail>(`/api/repairs/${repairId}`);
+          const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${repairId}`);
           setDetail(d);
         }
       } catch {
@@ -339,6 +373,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   <span className="font-mono text-[#00d4ff]">
                     {r.is_test ? <span className="text-red-400 font-bold mr-1 text-[10px] uppercase">Test</span> : null}
                     {r.tracking_code}
+                    {r.repair_order_number ? (
+                      <span className="block text-[10px] text-zinc-500 font-mono mt-0.5">{r.repair_order_number}</span>
+                    ) : null}
                   </span>
                   <span className="text-xs text-amber-300/90">{r.status.replace(/_/g, " ")}</span>
                 </div>
@@ -385,6 +422,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <h2 className="font-display font-bold text-lg text-[#00d4ff]">
                   {selected.is_test && <span className="rounded bg-red-500/20 border border-red-500/40 px-1.5 py-0.5 text-[10px] font-bold text-red-300 uppercase tracking-wider mr-2">Test</span>}
                   {selected.tracking_code}
+                  {selected.repair_order_number && (
+                    <span className="block text-xs font-mono text-zinc-400 font-normal mt-1">{selected.repair_order_number}</span>
+                  )}
                 </h2>
                 <Link
                   to={`/track/${selected.tracking_code}`}
@@ -439,6 +479,56 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
               )}
               {detail && (
                 <>
+              <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/5 px-3 py-3 space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200/90">Leistungen & Summen</p>
+                {detail.services && detail.services.length > 0 ? (
+                  <ul className="space-y-1 text-sm text-zinc-300">
+                    {detail.services.map((s) => (
+                      <li key={s.code} className="flex justify-between gap-2">
+                        <span>{s.name}</span>
+                        <span className="font-mono text-[#00d4ff]/90 shrink-0">{euroFromCents(s.price_cents)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-zinc-500">Keine Leistungszeilen gebucht.</p>
+                )}
+                {detail.revenue_breakdown && (
+                  <div className="pt-2 border-t border-white/10 space-y-1.5 text-xs text-zinc-400">
+                    <div className="flex justify-between gap-2">
+                      <span>Dienstleistungen (ohne Anfahrt)</span>
+                      <span className="font-mono text-zinc-200">{euroFromCents(detail.revenue_breakdown.leistungen_cents)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Anfahrt & Wege</span>
+                      <span className="font-mono text-zinc-200">{euroFromCents(detail.revenue_breakdown.anfahrt_cents)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Teile (Verkauf)</span>
+                      <span className="font-mono text-zinc-200">{euroFromCents(detail.revenue_breakdown.teile_cents)}</span>
+                    </div>
+                    {detail.revenue_breakdown.by_category.length > 0 && (
+                      <div className="pt-2 mt-1 border-t border-white/5">
+                        <p className="text-[10px] uppercase text-zinc-500 mb-1">Nach Kategorie</p>
+                        <ul className="space-y-0.5">
+                          {detail.revenue_breakdown.by_category.map((c) => (
+                            <li key={c.category_key} className="flex justify-between gap-2">
+                              <span>{c.category_label_de}</span>
+                              <span className="font-mono text-zinc-300">{euroFromCents(c.cents)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {typeof detail.repair.total_cents === "number" && (
+                  <p className="text-[10px] text-zinc-500 pt-1">
+                    Auftragssumme laut Karte:{" "}
+                    <span className="font-mono text-emerald-200/90">{euroFromCents(detail.repair.total_cents as number)}</span>
+                  </p>
+                )}
+              </div>
               <div>
                 <p className="text-sm font-semibold text-violet-300 mb-2">Ersatzteil hinzufügen</p>
                 <input
@@ -522,14 +612,40 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   ))}
                 </ul>
               </div>
-              <a
-                href={`/api/repairs/${selected.id}/invoice.pdf`}
-                className="inline-flex justify-center items-center w-full min-h-[48px] rounded-xl border border-[#00d4ff]/40 text-[#00d4ff] hover:bg-[#00d4ff]/10"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Rechnung PDF
-              </a>
+              <div className="flex flex-col gap-2">
+                <a
+                  href={`/api/repairs/${selected.id}/repair-order.pdf`}
+                  className="inline-flex justify-center items-center w-full min-h-[48px] rounded-xl border border-[#39ff14]/40 text-[#39ff14] hover:bg-[#39ff14]/10"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Reparaturauftrag A4 (PDF)
+                </a>
+                <a
+                  href={`/api/repairs/${selected.id}/repair-order-label.pdf`}
+                  className="inline-flex justify-center items-center w-full min-h-[44px] rounded-xl border border-zinc-500/40 text-zinc-300 hover:bg-white/5"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Etikett (PDF)
+                </a>
+                <a
+                  href={`/api/repairs/${selected.id}/invoice.pdf`}
+                  className="inline-flex justify-center items-center w-full min-h-[48px] rounded-xl border border-[#00d4ff]/40 text-[#00d4ff] hover:bg-[#00d4ff]/10"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Rechnung PDF
+                </a>
+                <button
+                  type="button"
+                  className="inline-flex justify-center items-center w-full min-h-[44px] rounded-xl border border-zinc-600 text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                  disabled={pdfRegenBusy}
+                  onClick={() => void regenerateRepairOrderPdf()}
+                >
+                  {pdfRegenBusy ? "PDF wird erzeugt…" : "Reparatur-PDFs neu erzeugen"}
+                </button>
+              </div>
               {selected.status === "abgeholt" && (
                 <div className="rounded-xl border border-white/10 bg-[#060b13]/80 p-3 space-y-2">
                   <p className="text-xs text-zinc-500">Zahlungsstatus (Korrektur)</p>

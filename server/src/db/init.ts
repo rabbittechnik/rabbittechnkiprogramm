@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { SCHEMA_SQL } from "./schemaText.js";
 import { getDbFilePath } from "../lib/dataPaths.js";
 import { recalculateAllRegisterBalances } from "../lib/registerBalance.js";
+import { berlinCalendarYear } from "../lib/repairOrderSequence.js";
 
 /** @deprecated Nutze `getDbFilePath` aus `lib/dataPaths` – bleibt für Kompatibilität. */
 export function getDbPath(): string {
@@ -24,6 +25,9 @@ export function openDatabase(): Database.Database {
   migrateMonatsberichte(db);
   migrateAppSettingsAndRegister(db);
   migrateRepairsTestFlag(db);
+  migrateServicesCategory(db);
+  migrateHardwareCatalogOrders(db);
+  migrateRepairOrderPdf(db);
   return db;
 }
 
@@ -150,6 +154,119 @@ function migrateRepairsTestFlag(db: Database.Database): void {
   if (!cols.some((c) => c.name === "is_test")) {
     db.exec(`ALTER TABLE repairs ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0`);
   }
+}
+
+function migrateServicesCategory(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(services)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "category")) {
+    db.exec(`ALTER TABLE services ADD COLUMN category TEXT NOT NULL DEFAULT 'sonstiges'`);
+  }
+}
+
+/** Fortlaufende Auftragsnummer R-JJJJ-NNNNNN + PDF-Pfade. */
+function migrateRepairOrderPdf(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repair_order_sequences (
+      year TEXT PRIMARY KEY,
+      last_seq INTEGER NOT NULL
+    )
+  `);
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "repair_order_number")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN repair_order_number TEXT`);
+  }
+  if (!cols.some((c) => c.name === "repair_order_pdf_path")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN repair_order_pdf_path TEXT`);
+  }
+  if (!cols.some((c) => c.name === "repair_order_label_pdf_path")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN repair_order_label_pdf_path TEXT`);
+  }
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_repairs_order_number ON repairs(repair_order_number) WHERE repair_order_number IS NOT NULL`);
+
+  const missing = db
+    .prepare(`SELECT id, created_at FROM repairs WHERE repair_order_number IS NULL ORDER BY datetime(created_at)`)
+    .all() as { id: string; created_at: string }[];
+  if (missing.length) {
+    const maxByYear = new Map<string, number>();
+    for (const row of missing) {
+      const yMatch = row.created_at?.match(/^(\d{4})/);
+      const year = yMatch?.[1] ?? berlinCalendarYear();
+      const next = (maxByYear.get(year) ?? 0) + 1;
+      maxByYear.set(year, next);
+      const ord = `R-${year}-${String(next).padStart(6, "0")}`;
+      db.prepare(`UPDATE repairs SET repair_order_number = ? WHERE id = ?`).run(ord, row.id);
+    }
+    for (const [year, last] of maxByYear) {
+      const existing = db.prepare(`SELECT last_seq FROM repair_order_sequences WHERE year = ?`).get(year) as
+        | { last_seq: number }
+        | undefined;
+      const use = Math.max(existing?.last_seq ?? 0, last);
+      db.prepare(`INSERT INTO repair_order_sequences (year, last_seq) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET last_seq = excluded.last_seq`).run(
+        year,
+        use
+      );
+    }
+  }
+
+  const allNums = db
+    .prepare(`SELECT repair_order_number FROM repairs WHERE repair_order_number IS NOT NULL`)
+    .all() as { repair_order_number: string }[];
+  const hi = new Map<string, number>();
+  for (const { repair_order_number: o } of allNums) {
+    const m = o.match(/^R-(\d{4})-(\d+)$/);
+    if (!m) continue;
+    const yy = m[1];
+    const n = parseInt(m[2], 10);
+    if (!Number.isFinite(n)) continue;
+    hi.set(yy, Math.max(hi.get(yy) ?? 0, n));
+  }
+  for (const [year, last] of hi) {
+    const existing = db.prepare(`SELECT last_seq FROM repair_order_sequences WHERE year = ?`).get(year) as
+      | { last_seq: number }
+      | undefined;
+    const use = Math.max(existing?.last_seq ?? 0, last);
+    db.prepare(`INSERT INTO repair_order_sequences (year, last_seq) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET last_seq = excluded.last_seq`).run(
+      year,
+      use
+    );
+  }
+}
+
+function migrateHardwareCatalogOrders(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hardware_catalog_orders (
+      id TEXT PRIMARY KEY,
+      reference_code TEXT NOT NULL UNIQUE,
+      customer_id TEXT NOT NULL REFERENCES customers(id),
+      status TEXT NOT NULL DEFAULT 'angebot',
+      markup_bps INTEGER NOT NULL DEFAULT 1000,
+      total_sale_cents INTEGER NOT NULL,
+      total_purchase_cents INTEGER NOT NULL,
+      signature_data_url TEXT,
+      send_customer_email INTEGER NOT NULL DEFAULT 0,
+      customer_email_sent INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS hardware_catalog_order_lines (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL REFERENCES hardware_catalog_orders(id) ON DELETE CASCADE,
+      product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      category_label TEXT NOT NULL,
+      subcategory_id TEXT NOT NULL,
+      subcategory_label TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      unit_sale_cents INTEGER NOT NULL,
+      unit_purchase_cents INTEGER NOT NULL,
+      line_sale_cents INTEGER NOT NULL,
+      line_purchase_cents INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hardware_orders_customer ON hardware_catalog_orders(customer_id);
+    CREATE INDEX IF NOT EXISTS idx_hardware_orders_created ON hardware_catalog_orders(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_hardware_order_lines_order ON hardware_catalog_order_lines(order_id);
+  `);
 }
 
 function migrateRepairsAcceptanceColumn(db: Database.Database): void {

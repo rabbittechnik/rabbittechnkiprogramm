@@ -5,45 +5,17 @@ import { SignatureCanvas, type SignatureCanvasRef } from "../components/Signatur
 
 const DEVICE_TYPES = ["Laptop", "PC", "Smartphone", "Tablet", "Konsole", "Sonstiges"];
 
-/** Gruppierung nur in der UI; unbekannte Codes landen unter „Sonstiges“. */
-const SERVICE_CATEGORY_ORDER = [
-  "Diagnose & Basis",
-  "Reinigung & Kühlung",
-  "Software & Betriebssystem",
-  "Daten",
-  "Speicher & Arbeitsspeicher",
-  "Hardware & Komponenten",
-  "Netzwerk",
-  "Sonstiges",
-] as const;
-
-const SERVICE_CATEGORY: Record<string, (typeof SERVICE_CATEGORY_ORDER)[number]> = {
-  diagnose: "Diagnose & Basis",
-  cleaning: "Reinigung & Kühlung",
-  thermal_paste: "Reinigung & Kühlung",
-  luefter_service: "Reinigung & Kühlung",
-  software: "Software & Betriebssystem",
-  virus_remove: "Software & Betriebssystem",
-  driver_update: "Software & Betriebssystem",
-  win_install: "Software & Betriebssystem",
-  bios_update: "Software & Betriebssystem",
-  office_setup: "Software & Betriebssystem",
-  backup: "Daten",
-  migration: "Daten",
-  data_recovery_ext: "Daten",
-  os_clone: "Daten",
-  ssd_install: "Speicher & Arbeitsspeicher",
-  ram_upgrade: "Speicher & Arbeitsspeicher",
-  hardware: "Hardware & Komponenten",
-  display: "Hardware & Komponenten",
-  laptop_battery: "Hardware & Komponenten",
-  keyboard_replace: "Hardware & Komponenten",
-  psu_desktop: "Hardware & Komponenten",
-  wlan_network: "Netzwerk",
-};
-
 type Problem = { key: string; label: string };
-type ServiceRow = { id: string; code: string; name: string; price_cents: number; sort_order: number };
+type ServiceRow = {
+  id: string;
+  code: string;
+  name: string;
+  price_cents: number;
+  sort_order: number;
+  category_key?: string;
+  category_label_de?: string;
+  category_sort_index?: number;
+};
 type PartSuggestion = { id: string; name: string; sale_cents: number; score: number; notes: string | null };
 
 type StammCustomer = { id: string; name: string; email: string | null; phone: string | null; address: string | null };
@@ -79,6 +51,7 @@ export function Wizard() {
   const [done, setDone] = useState<{
     tracking: string;
     id: string;
+    repairOrderNumber?: string | null;
     isTest?: boolean;
     confirmationEmailSkipped?: boolean;
   } | null>(null);
@@ -174,15 +147,19 @@ export function Wizard() {
     [allServices]
   );
 
-  const servicesByCategory = useMemo(() => {
-    const map = new Map<string, ServiceRow[]>();
+  /** Gruppen nach `category_sort_index` / API (Server: serviceCategoryMeta). */
+  const serviceGroups = useMemo(() => {
+    const m = new Map<number, { title: string; rows: ServiceRow[] }>();
     for (const s of servicesSorted) {
-      const cat = SERVICE_CATEGORY[s.code] ?? "Sonstiges";
-      const list = map.get(cat) ?? [];
-      list.push(s);
-      map.set(cat, list);
+      const idx = s.category_sort_index ?? 99;
+      const title = s.category_label_de ?? "Sonstiges";
+      const cur = m.get(idx);
+      if (cur) cur.rows.push(s);
+      else m.set(idx, { title, rows: [s] });
     }
-    return map;
+    return [...m.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([sortIdx, g]) => ({ sortIdx, title: g.title, rows: g.rows }));
   }, [servicesSorted]);
 
   const resetServicesToDefaults = () => {
@@ -272,7 +249,7 @@ export function Wizard() {
         };
       }
       const res = await fetchJson<{
-        repair: { id: string };
+        repair: { id: string; repair_order_number?: string | null };
         tracking_code: string;
         confirmationEmailSkipped?: boolean;
       }>("/api/repairs", {
@@ -282,6 +259,7 @@ export function Wizard() {
       setDone({
         tracking: res.tracking_code,
         id: res.repair.id,
+        repairOrderNumber: res.repair.repair_order_number ?? null,
         isTest,
         confirmationEmailSkipped: res.confirmationEmailSkipped,
       });
@@ -311,6 +289,12 @@ export function Wizard() {
               Eintrag in Stammdaten ergänzen oder bei neuer Annahme E-Mail angeben.
             </p>
           )}
+          {done.repairOrderNumber && (
+            <p className="text-sm text-zinc-400">
+              Auftragsnummer:{" "}
+              <span className="font-mono text-white font-semibold">{done.repairOrderNumber}</span>
+            </p>
+          )}
           <p className="text-zinc-400">Tracking-Code für den Kunden:</p>
           <p className="text-3xl font-mono font-bold tracking-wider text-white">{done.tracking}</p>
           <div className="flex justify-center">
@@ -320,13 +304,29 @@ export function Wizard() {
               className="w-40 h-40 rounded-xl border border-[#00d4ff]/40 bg-white p-2"
             />
           </div>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-3 justify-center">
             <Link
               to={`/track/${encodeURIComponent(done.tracking)}`}
               className="inline-flex items-center justify-center rounded-xl min-h-[52px] px-6 font-semibold bg-gradient-to-r from-[#39ff14] to-[#00d4ff] text-[#060b13]"
             >
               Status anzeigen
             </Link>
+            <a
+              href={`/api/repairs/${done.id}/repair-order.pdf`}
+              className="inline-flex items-center justify-center rounded-xl min-h-[52px] px-5 font-semibold border border-[#39ff14]/50 text-[#39ff14]"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Reparaturauftrag A4
+            </a>
+            <a
+              href={`/api/repairs/${done.id}/repair-order-label.pdf`}
+              className="inline-flex items-center justify-center rounded-xl min-h-[52px] px-5 font-semibold border border-zinc-500/50 text-zinc-300"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Etikett PDF
+            </a>
             <a
               href={`/api/repairs/${done.id}/invoice.pdf`}
               className="inline-flex items-center justify-center rounded-xl min-h-[52px] px-6 font-semibold border border-[#00d4ff]/50 text-[#00d4ff]"
@@ -623,13 +623,13 @@ export function Wizard() {
                   <p className="text-xs text-zinc-600 py-2 text-center">Zuerst ein Problem auswählen</p>
                 )}
                 {problemKey &&
-                  SERVICE_CATEGORY_ORDER.map((cat) => {
-                    const rows = servicesByCategory.get(cat);
+                  serviceGroups.map((g) => {
+                    const rows = g.rows;
                     if (!rows?.length) return null;
                     return (
-                      <div key={cat} className="space-y-1 pb-2 last:pb-0 border-b border-white/5 last:border-b-0">
+                      <div key={`svc-grp-${g.sortIdx}`} className="space-y-1 pb-2 last:pb-0 border-b border-white/5 last:border-b-0">
                         <p className="text-[10px] font-semibold uppercase tracking-wide text-[#9b59b6]/90 px-1.5 pt-1">
-                          {cat}
+                          {g.title}
                         </p>
                         {rows.map((s) => (
                           <label

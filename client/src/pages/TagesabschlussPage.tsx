@@ -31,6 +31,13 @@ type Tx = {
   invoice_number: string | null;
 };
 
+type RevenueBreakdown = {
+  teile_cents: number;
+  leistungen_cents: number;
+  anfahrt_cents: number;
+  by_category: { category_key: string; category_label_de: string; cents: number }[];
+};
+
 function euro(cents: number): string {
   return `${(cents / 100).toFixed(2).replace(".", ",")} €`;
 }
@@ -51,7 +58,9 @@ export function TagesabschlussPage() {
   const { gate, loginPass, setLoginPass, loginErr, tryLogin, logout } = useWorkshopGate();
   const [list, setList] = useState<ClosingRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [detail, setDetail] = useState<(ClosingRow & { transactions: Tx[] }) | null>(null);
+  const [detail, setDetail] = useState<
+    (ClosingRow & { transactions: Tx[]; business_period_de?: string; revenue_breakdown?: RevenueBreakdown }) | null
+  >(null);
   const [err, setErr] = useState<string | null>(null);
   const [openingEuro, setOpeningEuro] = useState("");
   const [openingBusy, setOpeningBusy] = useState(false);
@@ -74,9 +83,9 @@ export function TagesabschlussPage() {
   const loadDetail = useCallback(async (date: string) => {
     setErr(null);
     try {
-      const d = await fetchWorkshop<ClosingRow & { transactions: Tx[] }>(
-        `/api/tagesabschluesse/${encodeURIComponent(date)}`
-      );
+      const d = await fetchWorkshop<
+        ClosingRow & { transactions: Tx[]; business_period_de?: string; revenue_breakdown?: RevenueBreakdown }
+      >(`/api/tagesabschluesse/${encodeURIComponent(date)}`);
       setDetail(d);
     } catch (e) {
       setDetail(null);
@@ -140,7 +149,7 @@ export function TagesabschlussPage() {
   return (
     <RtShell
       title="Tagesabschluss"
-      subtitle="Geschäftstag Europe/Berlin 00:00–23:59 · automatische Archivierung nach Tagesende"
+      subtitle="Kalendertag Europe/Berlin (Zahlungseingänge) · automatische Archivierung nach Tagesende"
       actions={
         <div className="flex flex-wrap gap-2 items-center">
           <Link to="/" className="text-xs text-zinc-500 hover:text-zinc-300">
@@ -244,9 +253,48 @@ export function TagesabschlussPage() {
             <div className="space-y-4">
               <div className="rt-panel rt-panel-violet p-4">
                 <h2 className="text-lg font-semibold text-white mb-1 font-mono">{detail.business_date}</h2>
+                {detail.business_period_de && (
+                  <p className="text-sm text-cyan-100/95 mb-2 border-l-2 border-cyan-400/60 pl-3">
+                    Zeitraum: {detail.business_period_de}
+                  </p>
+                )}
                 <p className="text-xs text-zinc-500 mb-4">
                   erzeugt {detail.generated_at ? formatDeBerlin(String(detail.generated_at)) : "—"}
                 </p>
+                {detail.revenue_breakdown && (
+                  <div className="mb-5 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-3 text-sm">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200/90 mb-2">
+                      Umsatz nach Art (bezahlte Aufträge, Kalendertag)
+                    </p>
+                    <ul className="space-y-1.5 text-zinc-200">
+                      <li className="flex justify-between gap-4">
+                        <span>Dienstleistungen (ohne Anfahrt)</span>
+                        <span className="font-mono shrink-0">{euro(detail.revenue_breakdown.leistungen_cents)}</span>
+                      </li>
+                      <li className="flex justify-between gap-4">
+                        <span>Anfahrt & Wege</span>
+                        <span className="font-mono shrink-0">{euro(detail.revenue_breakdown.anfahrt_cents)}</span>
+                      </li>
+                      <li className="flex justify-between gap-4">
+                        <span>Teile / Hardware (Verkauf)</span>
+                        <span className="font-mono shrink-0">{euro(detail.revenue_breakdown.teile_cents)}</span>
+                      </li>
+                    </ul>
+                    {detail.revenue_breakdown.by_category.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-white/10">
+                        <p className="text-[10px] text-zinc-500 uppercase mb-1.5">Leistungen nach Kategorie</p>
+                        <ul className="space-y-1 text-xs text-zinc-400">
+                          {detail.revenue_breakdown.by_category.map((c) => (
+                            <li key={c.category_key} className="flex justify-between gap-4">
+                              <span>{c.category_label_de}</span>
+                              <span className="font-mono text-zinc-300 shrink-0">{euro(c.cents)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="grid sm:grid-cols-2 gap-3 text-sm">
                   <div>
                     <p className="text-zinc-500 text-xs uppercase">Gesamtumsatz</p>

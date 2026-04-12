@@ -66,3 +66,17 @@ export function networkOrdersDir(): string {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   return d;
 }
+
+/** Reparaturauftrags-PDFs (A4), siehe `pdfRepairOrder.ts`. */
+export function reparaturenPdfsDir(): string {
+  const d = path.join(getDataRoot(), "reparaturen", "pdfs");
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+/** Kompakte Etiketten-PDFs zum Gerätelabel / Lager. */
+export function reparaturenLabelsDir(): string {
+  const d = path.join(getDataRoot(), "reparaturen", "labels");
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  return d;
+}

@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import type Database from "better-sqlite3";
 import { requireWorkshopAuth } from "./lib/workshopAuth.js";
+import { formatBerlinYearMonthRangeDe } from "./lib/berlinCalendar.js";
+import { computeMonthRevenueBreakdown } from "./lib/dayClosing.js";
 
 function paramStr(v: string | string[] | undefined): string {
   if (v === undefined) return "";
@@ -51,6 +53,13 @@ export function registerMonthReportRoutes(app: Express, db: Database.Database): 
     } catch {
       transactions = [];
     }
-    res.json({ ...rest, overview, transactions });
+    const revenue_breakdown = computeMonthRevenueBreakdown(db, ym);
+    res.json({
+      ...rest,
+      overview,
+      transactions,
+      business_period_de: formatBerlinYearMonthRangeDe(ym),
+      revenue_breakdown,
+    });
   });
 }

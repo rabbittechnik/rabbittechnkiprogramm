@@ -7,12 +7,13 @@ import express from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
 import { openDatabase } from "./db/init.js";
-import { ensureServices, seedIfEmpty } from "./seed.js";
+import { ensureServices, seedIfEmpty, syncServiceCatalogFromSeed } from "./seed.js";
 import { registerRoutes, paramStr } from "./routes.js";
 import { registerErpOverlayRoutes } from "./erp/overlayRoutes.js";
 import { registerDayClosingRoutes } from "./dayClosingRoutes.js";
 import { registerMonthReportRoutes } from "./monthReportRoutes.js";
 import { registerNetworkRoutes } from "./networkRoutes.js";
+import { registerHardwareCatalogOrderRoutes } from "./hardwareCatalogOrderRoutes.js";
 import { startDayClosingScheduler } from "./lib/dayClosingScheduler.js";
 import { startDataBackupScheduler } from "./lib/dataBackupScheduler.js";
 import { isAutomaticDataBackupWanted } from "./lib/dataBackup.js";
@@ -44,6 +45,7 @@ app.use(express.json({ limit: "12mb" }));
 const db = openDatabase();
 seedIfEmpty(db);
 ensureServices(db);
+syncServiceCatalogFromSeed(db);
 
 const dataRoot = getDataRoot();
 const dbPath = getDbFilePath();
@@ -63,6 +65,7 @@ registerErpOverlayRoutes(app, db);
 registerDayClosingRoutes(app, db);
 registerMonthReportRoutes(app, db);
 registerNetworkRoutes(app, db);
+registerHardwareCatalogOrderRoutes(app, db);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -102,7 +105,7 @@ app.use("/uploads", express.static(UPLOAD_ROOT));
 app.get("/api/repairs", requireWorkshopAuth, (_req, res) => {
   const rows = db
     .prepare(
-      `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
+      `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
        r.is_test,
        c.name as customer_name, d.device_type, d.brand, d.model
        FROM repairs r

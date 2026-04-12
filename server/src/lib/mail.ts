@@ -749,6 +749,46 @@ ${emailTrackingHero(
   return sendSmtp({ to: opts.to, subject, text, html });
 }
 
+/** Kundeninfo nach Teile-/Hardware-Auftrag (Angebot oder Bestätigung). */
+export async function sendTeileBestellenOrderEmail(opts: {
+  to: string;
+  kundenname: string;
+  referenceCode: string;
+  statusLabel: string;
+  linesText: string;
+  totalEuro: string;
+}): Promise<{ sent: boolean; reason?: string }> {
+  if (!isMailConfigured()) {
+    return { sent: false, reason: "E-Mail nicht konfiguriert (weder RABBIT_RESEND_API_KEY noch vollständiges SMTP)." };
+  }
+  const subject = `${opts.statusLabel} ${opts.referenceCode} – ${COMPANY.name}`;
+  const text = `Hallo ${opts.kundenname},
+
+${opts.statusLabel} – Referenz ${opts.referenceCode}
+
+${opts.linesText}
+
+Gesamt: ${opts.totalEuro} €
+
+Bei Rückfragen erreichen Sie uns unter ${COMPANY.phone} oder ${COMPANY.email}.
+
+Mit freundlichen Grüßen
+${COMPANY.name}
+${COMPANY.street}
+${COMPANY.zipCity}`;
+  const inner = `${emailGreeting(opts.kundenname)}
+<tr><td style="padding:6px 24px 12px;">
+  <p style="margin:0 0 8px;font-size:13px;color:#94a3b8;">${escapeHtml(opts.statusLabel)} · <span style="font-family:ui-monospace,monospace;color:#7ee8ff;">${escapeHtml(opts.referenceCode)}</span></p>
+  <div style="font-size:14px;line-height:1.7;color:#e2e8f0;white-space:pre-wrap;">${escapeHtml(opts.linesText)}</div>
+</td></tr>
+<tr><td style="padding:8px 24px 22px;">
+  <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#7ee8ff;font-weight:700;">Gesamt</p>
+  <p style="margin:0;font-size:22px;font-weight:800;color:#00d4ff;">${escapeHtml(opts.totalEuro)} €</p>
+</td></tr>`;
+  const html = wrapCustomerEmailHtml(inner, subject);
+  return sendSmtp({ to: opts.to, subject, text, html });
+}
+
 /** Server-Logs für Reparatur-Mails (Promise lehnt nur bei echten Exceptions ab, nicht bei `{ sent: false }`). */
 export function logMailOutcome(
   kind: string,

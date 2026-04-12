@@ -7,6 +7,8 @@ import type Database from "better-sqlite3";
 import QRCode from "qrcode";
 import { PROBLEMS } from "./seed.js";
 import { getServiceRowsByCodes, getSuggestedServiceCodes, sumServiceCents } from "./lib/pricing.js";
+import { toPublicServiceRow } from "./lib/serviceCategoryMeta.js";
+import { computeRevenueBreakdownForRepairIds } from "./lib/dayClosing.js";
 import { recalculateRepairTotal, syncRepairStatusForParts } from "./lib/repairTotals.js";
 import { writeInvoicePdf } from "./lib/pdfInvoice.js";
 import { writeAdjustmentDocumentPdf } from "./lib/pdfInvoiceAdjustments.js";
@@ -20,6 +22,8 @@ import {
   syncPrimaryInvoicePaymentAndPdf,
 } from "./lib/invoiceGobd.js";
 import { writeAcceptancePdf } from "./lib/pdfAcceptance.js";
+import { allocateRepairOrderNumber, berlinCalendarYear } from "./lib/repairOrderSequence.js";
+import { scheduleSyncRepairOrderPdfs, syncRepairOrderPdfs } from "./lib/syncRepairOrderPdf.js";
 import { makeTrackingCode } from "./lib/trackingCode.js";
 import { resolveDeviceImage } from "./lib/deviceImage.js";
 import {
@@ -228,8 +232,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   app.get("/api/services", (_req, res) => {
-    const rows = db.prepare(`SELECT id, code, name, price_cents, sort_order FROM services ORDER BY sort_order`).all();
-    res.json(rows);
+    const rows = db
+      .prepare(`SELECT id, code, name, price_cents, sort_order, category FROM services ORDER BY sort_order`)
+      .all() as { id: string; code: string; name: string; price_cents: number; sort_order: number; category: string }[];
+    res.json(rows.map((r) => toPublicServiceRow(r)));
   });
 
   app.get("/api/problems", (_req, res) => {
@@ -344,7 +350,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
       let customerForMail!: { name: string; email: string | null };
 
+      const orderYear = berlinCalendarYear();
       const tx = db.transaction(() => {
+        const repairOrderNumber = allocateRepairOrderNumber(db, orderYear);
         const cid = existingCustomerId || nanoid();
         if (!existingCustomerId) {
           db.prepare(
@@ -372,11 +380,12 @@ export function registerRoutes(app: Express, db: Database.Database) {
         );
 
         db.prepare(
-          `INSERT INTO repairs (id, tracking_code, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, status, total_cents, payment_status, is_test)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO repairs (id, tracking_code, repair_order_number, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, status, total_cents, payment_status, is_test)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           rid,
           tracking,
+          repairOrderNumber,
           cid,
           did,
           problemKey || null,
@@ -428,6 +437,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
         db.prepare(`UPDATE repairs SET acceptance_pdf_path = ? WHERE id = ?`).run(acceptancePdfPath, rid);
       } catch (pdfErr) {
         console.error("[pdf] Auftragsbestätigung fehlgeschlagen:", pdfErr);
+      }
+      try {
+        await syncRepairOrderPdfs(db, rid);
+      } catch (roPdfErr) {
+        console.error("[pdf] Reparaturauftrag fehlgeschlagen:", roPdfErr);
       }
 
       const row = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(rid);
@@ -491,12 +505,14 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const device = db.prepare(`SELECT * FROM devices WHERE id = (SELECT device_id FROM repairs WHERE id = ?)`).get(id);
     const services = db
       .prepare(
-        `SELECT s.code, s.name, rs.price_cents FROM repair_services rs JOIN services s ON s.id = rs.service_id WHERE rs.repair_id = ?`
+        `SELECT s.code, s.name, rs.price_cents, COALESCE(s.category, 'sonstiges') AS category
+         FROM repair_services rs JOIN services s ON s.id = rs.service_id WHERE rs.repair_id = ?`
       )
       .all(id);
     const parts = db.prepare(`SELECT * FROM repair_parts WHERE repair_id = ?`).all(id);
     const media = db.prepare(`SELECT id, kind, file_path, mime, created_at FROM repair_media WHERE repair_id = ?`).all(id);
-    res.json({ repair, customer, device, services, parts, media });
+    const revenue_breakdown = computeRevenueBreakdownForRepairIds(db, [id]);
+    res.json({ repair, customer, device, services, parts, media, revenue_breakdown });
   });
 
   app.patch("/api/repairs/:id/status", requireWorkshopAuth, async (req, res) => {
@@ -551,6 +567,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) as typeof previous;
     queueCustomerRepairNotification(db, id);
+    try {
+      await syncRepairOrderPdfs(db, id, req);
+    } catch (e) {
+      console.error("[pdf] Reparaturauftrag (Status):", e);
+    }
 
     res.json({ repair });
   });
@@ -691,6 +712,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
         ).run(id);
       }
       await syncPrimaryInvoicePaymentAndPdf(db, id);
+      try {
+        await syncRepairOrderPdfs(db, id, req);
+      } catch (e) {
+        console.error("[pdf] Reparaturauftrag (Abholung):", e);
+      }
       res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
       return;
     }
@@ -704,6 +730,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
         `UPDATE repairs SET status = 'abgeholt', payment_status = 'bezahlt', payment_method = 'bar', payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
       ).run(id);
       await syncPrimaryInvoicePaymentAndPdf(db, id);
+      try {
+        await syncRepairOrderPdfs(db, id, req);
+      } catch (e) {
+        console.error("[pdf] Reparaturauftrag (Abholung):", e);
+      }
       res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
       return;
     }
@@ -721,6 +752,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
         db.prepare(`UPDATE repairs SET payment_due_at = datetime('now', '+7 days') WHERE id = ?`).run(id);
       }
       await syncPrimaryInvoicePaymentAndPdf(db, id);
+      try {
+        await syncRepairOrderPdfs(db, id, req);
+      } catch (e) {
+        console.error("[pdf] Reparaturauftrag (Abholung):", e);
+      }
       res.json({ ok: true, repair: db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id) });
       return;
     }
@@ -1073,6 +1109,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       repairId,
       `Neues Ersatzteil: „${name}“ – ${partStatusLabelDe(initialStatus)}`
     );
+    scheduleSyncRepairOrderPdfs(db, repairId, req);
     res.status(201).json({ part });
   });
 
@@ -1143,6 +1180,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       }`;
       queueCustomerRepairNotification(db, repairId, zusatz);
     }
+    scheduleSyncRepairOrderPdfs(db, repairId, req);
     res.json({ part });
   });
 
@@ -1386,6 +1424,74 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     res.type("pdf").sendFile(path.resolve(row.acceptance_pdf_path));
+  });
+
+  /** Reparaturauftrag A4 (wie Rechnung: nur mit unratbarem `id`); fehlt die Datei, wird sie nachgezogen. */
+  app.get("/api/repairs/:id/repair-order.pdf", async (req, res) => {
+    const id = paramStr(req.params.id);
+    let row = db.prepare(`SELECT repair_order_pdf_path FROM repairs WHERE id = ?`).get(id) as
+      | { repair_order_pdf_path: string | null }
+      | undefined;
+    if (!row) {
+      res.status(404).send("Nicht gefunden");
+      return;
+    }
+    if (!row.repair_order_pdf_path || !fs.existsSync(row.repair_order_pdf_path)) {
+      try {
+        await syncRepairOrderPdfs(db, id, req);
+      } catch (e) {
+        console.error("[pdf] Reparaturauftrag nachladen:", e);
+      }
+      row = db.prepare(`SELECT repair_order_pdf_path FROM repairs WHERE id = ?`).get(id) as typeof row;
+    }
+    if (!row?.repair_order_pdf_path || !fs.existsSync(row.repair_order_pdf_path)) {
+      res.status(404).send("Reparaturauftrag-PDF nicht verfügbar");
+      return;
+    }
+    res.type("pdf").sendFile(path.resolve(row.repair_order_pdf_path));
+  });
+
+  /** Kompaktes Etiketten-PDF zum Auftrag (Zugriff wie `repair-order.pdf`). */
+  app.get("/api/repairs/:id/repair-order-label.pdf", async (req, res) => {
+    const id = paramStr(req.params.id);
+    let row = db.prepare(`SELECT repair_order_label_pdf_path FROM repairs WHERE id = ?`).get(id) as
+      | { repair_order_label_pdf_path: string | null }
+      | undefined;
+    if (!row) {
+      res.status(404).send("Nicht gefunden");
+      return;
+    }
+    if (!row.repair_order_label_pdf_path || !fs.existsSync(row.repair_order_label_pdf_path)) {
+      try {
+        await syncRepairOrderPdfs(db, id, req);
+      } catch (e) {
+        console.error("[pdf] Etikett nachladen:", e);
+      }
+      row = db.prepare(`SELECT repair_order_label_pdf_path FROM repairs WHERE id = ?`).get(id) as typeof row;
+    }
+    if (!row?.repair_order_label_pdf_path || !fs.existsSync(row.repair_order_label_pdf_path)) {
+      res.status(404).send("Etiketten-PDF nicht verfügbar");
+      return;
+    }
+    res.type("pdf").sendFile(path.resolve(row.repair_order_label_pdf_path));
+  });
+
+  /** PDFs neu erzeugen (A4 + Etikett). */
+  app.post("/api/repairs/:id/repair-order-pdf", requireWorkshopAuth, async (req, res) => {
+    const id = paramStr(req.params.id);
+    const exists = db.prepare(`SELECT id FROM repairs WHERE id = ?`).get(id);
+    if (!exists) {
+      res.status(404).json({ error: "Nicht gefunden" });
+      return;
+    }
+    try {
+      await syncRepairOrderPdfs(db, id, req);
+      const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(id);
+      res.json({ ok: true, repair });
+    } catch (e) {
+      console.error("[pdf] Reparaturauftrag manuell:", e);
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   app.get("/api/repairs/:id/qr.png", async (req, res) => {

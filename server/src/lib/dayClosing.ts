@@ -1,8 +1,21 @@
 import type Database from "better-sqlite3";
 import { nanoid } from "nanoid";
 
-import { berlinYesterdayYmd, instantToBerlinYmd, nextBerlinCalendarDay, prevBerlinCalendarDay } from "./berlinCalendar.js";
+import {
+  berlinYesterdayYmd,
+  instantToBerlinYmd,
+  instantToBerlinYearMonth,
+  nextBerlinCalendarDay,
+  prevBerlinCalendarDay,
+} from "./berlinCalendar.js";
 import { computeRegisterBalanceEodForNewRow } from "./registerBalance.js";
+import {
+  ANFAHRT_CATEGORY_KEY,
+  SERVICE_CATEGORY_LABEL_DE,
+  SERVICE_CATEGORY_ORDER,
+  normalizeServiceCategoryKey,
+  type ServiceCategoryKey,
+} from "./serviceCategoryMeta.js";
 
 export type DayClosingTransaction = {
   repair_id: string;
@@ -155,4 +168,91 @@ export function earliestPaidBerlinYmd(db: Database.Database): string | null {
     .get() as { payment_paid_at: string } | undefined;
   if (!row) return null;
   return instantToBerlinYmd(row.payment_paid_at);
+}
+
+export type DayRevenueBreakdownLine = {
+  category_key: ServiceCategoryKey;
+  category_label_de: string;
+  cents: number;
+};
+
+/** Umsatz nach Teilen vs. Leistungen (Kalendertag Berlin, bezahlte Aufträge). */
+export type DayRevenueBreakdown = {
+  teile_cents: number;
+  /** Summe aller Leistungszeilen außer Anfahrt */
+  leistungen_cents: number;
+  anfahrt_cents: number;
+  /** Nur Kategorien mit Umsatz > 0 */
+  by_category: DayRevenueBreakdownLine[];
+};
+
+/** Summen Teile + Leistungen nach Kategorie für eine Menge Aufträge (z. B. ein Tag oder ein Monat). */
+export function computeRevenueBreakdownForRepairIds(db: Database.Database, repairIds: string[]): DayRevenueBreakdown {
+  if (repairIds.length === 0) {
+    return { teile_cents: 0, leistungen_cents: 0, anfahrt_cents: 0, by_category: [] };
+  }
+
+  const ph = repairIds.map(() => "?").join(",");
+
+  const teileRow = db
+    .prepare(`SELECT COALESCE(SUM(sale_cents), 0) AS s FROM repair_parts WHERE repair_id IN (${ph})`)
+    .get(...repairIds) as { s: number };
+
+  const catRows = db
+    .prepare(
+      `SELECT s.category AS cat, COALESCE(SUM(rs.price_cents), 0) AS cents
+       FROM repair_services rs
+       JOIN services s ON s.id = rs.service_id
+       WHERE rs.repair_id IN (${ph})
+       GROUP BY s.category`
+    )
+    .all(...repairIds) as { cat: string; cents: number }[];
+
+  const byKey = new Map<ServiceCategoryKey, number>();
+  for (const k of SERVICE_CATEGORY_ORDER) byKey.set(k, 0);
+  for (const row of catRows) {
+    const key = normalizeServiceCategoryKey(row.cat);
+    byKey.set(key, (byKey.get(key) ?? 0) + row.cents);
+  }
+
+  const anfahrt_cents = byKey.get(ANFAHRT_CATEGORY_KEY) ?? 0;
+  let leistungen_cents = 0;
+  for (const k of SERVICE_CATEGORY_ORDER) {
+    if (k === ANFAHRT_CATEGORY_KEY) continue;
+    leistungen_cents += byKey.get(k) ?? 0;
+  }
+
+  const by_category: DayRevenueBreakdownLine[] = SERVICE_CATEGORY_ORDER.map((category_key) => ({
+    category_key,
+    category_label_de: SERVICE_CATEGORY_LABEL_DE[category_key],
+    cents: byKey.get(category_key) ?? 0,
+  })).filter((r) => r.cents > 0);
+
+  return {
+    teile_cents: teileRow.s,
+    leistungen_cents,
+    anfahrt_cents,
+    by_category,
+  };
+}
+
+export function computeDayRevenueBreakdown(db: Database.Database, businessDateYmd: string): DayRevenueBreakdown {
+  const repairRows = db
+    .prepare(
+      `SELECT id, payment_paid_at FROM repairs WHERE payment_status = 'bezahlt' AND payment_paid_at IS NOT NULL AND is_test = 0`
+    )
+    .all() as { id: string; payment_paid_at: string | null }[];
+  const ids = repairRows.filter((r) => instantToBerlinYmd(r.payment_paid_at) === businessDateYmd).map((r) => r.id);
+  return computeRevenueBreakdownForRepairIds(db, ids);
+}
+
+/** Bezahlte Aufträge mit Zahlungseingang im Kalendermonat YYYY-MM (Europe/Berlin). */
+export function computeMonthRevenueBreakdown(db: Database.Database, yearMonth: string): DayRevenueBreakdown {
+  const repairRows = db
+    .prepare(
+      `SELECT id, payment_paid_at FROM repairs WHERE payment_status = 'bezahlt' AND payment_paid_at IS NOT NULL AND is_test = 0`
+    )
+    .all() as { id: string; payment_paid_at: string | null }[];
+  const ids = repairRows.filter((r) => instantToBerlinYearMonth(r.payment_paid_at) === yearMonth).map((r) => r.id);
+  return computeRevenueBreakdownForRepairIds(db, ids);
 }

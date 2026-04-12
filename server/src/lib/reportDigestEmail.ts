@@ -4,6 +4,8 @@ import {
   isMailConfigured,
   sendInternalWorkshopReportEmail,
 } from "./mail.js";
+import { formatBerlinBusinessDayRangeDe, formatBerlinYearMonthRangeDe } from "./berlinCalendar.js";
+import { computeDayRevenueBreakdown, computeMonthRevenueBreakdown } from "./dayClosing.js";
 
 /**
  * Nach neu angelegtem Tages- bzw. Monatsbericht: eine E-Mail pro Lauf (jeweils letzter neuer Tag/Monat),
@@ -45,10 +47,25 @@ export async function sendReportDigestEmails(
         }
       | undefined;
     if (row) {
+      const bd = computeDayRevenueBreakdown(db, row.business_date);
       const lines: string[] = [
-        `Tagesabschluss ${row.business_date} (Kalendertag Europe/Berlin, Zahlungseingänge)`,
+        `Tagesabschluss ${row.business_date}`,
+        formatBerlinBusinessDayRangeDe(row.business_date),
+        "(Zahlungseingänge je Auftrag, Europe/Berlin)",
         "",
         `Gesamtumsatz: ${formatEuroFromCents(row.total_cents)} €`,
+        `Davon Leistungen (ohne Anfahrt): ${formatEuroFromCents(bd.leistungen_cents)} €`,
+        `Anfahrt & Wege: ${formatEuroFromCents(bd.anfahrt_cents)} €`,
+        `Teile / Hardware (Verkauf): ${formatEuroFromCents(bd.teile_cents)} €`,
+      ];
+      if (bd.by_category.length > 0) {
+        lines.push("", "Leistungen nach Kategorie:");
+        for (const c of bd.by_category) {
+          lines.push(`  · ${c.category_label_de}: ${formatEuroFromCents(c.cents)} €`);
+        }
+      }
+      lines.push(
+        "",
         `Bar: ${formatEuroFromCents(row.bar_cents)} € | Online (SumUp): ${formatEuroFromCents(row.online_sumup_cents)} €`,
         `SumUp Tap to Pay: ${formatEuroFromCents(row.tap_to_pay_cents)} € | Überweisung: ${formatEuroFromCents(row.ueberweisung_cents)} €`,
       ];
@@ -96,10 +113,25 @@ export async function sendReportDigestEmails(
         }
       | undefined;
     if (row) {
+      const bd = computeMonthRevenueBreakdown(db, row.year_month);
       const lines: string[] = [
-        `Monatsbericht ${row.year_month} (bezahlte Aufträge nach Zahlungseingang, Europe/Berlin)`,
+        `Monatsbericht ${row.year_month}`,
+        formatBerlinYearMonthRangeDe(row.year_month),
+        "(bezahlte Aufträge nach Zahlungseingang, Europe/Berlin)",
         "",
         `Monatsumsatz: ${formatEuroFromCents(row.total_cents)} €`,
+        `Davon Leistungen (ohne Anfahrt): ${formatEuroFromCents(bd.leistungen_cents)} €`,
+        `Anfahrt & Wege: ${formatEuroFromCents(bd.anfahrt_cents)} €`,
+        `Teile / Hardware (Verkauf): ${formatEuroFromCents(bd.teile_cents)} €`,
+      ];
+      if (bd.by_category.length > 0) {
+        lines.push("", "Leistungen nach Kategorie:");
+        for (const c of bd.by_category) {
+          lines.push(`  · ${c.category_label_de}: ${formatEuroFromCents(c.cents)} €`);
+        }
+      }
+      lines.push(
+        "",
         `Bar: ${formatEuroFromCents(row.bar_cents)} € | Online (SumUp): ${formatEuroFromCents(row.online_sumup_cents)} €`,
         `SumUp Tap to Pay: ${formatEuroFromCents(row.tap_to_pay_cents)} € | Überweisung: ${formatEuroFromCents(row.ueberweisung_cents)} €`,
       ];

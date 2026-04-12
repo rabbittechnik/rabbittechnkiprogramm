@@ -102,3 +102,26 @@ export function msUntilBerlinPostMidnight(ref: Date = new Date(), graceMs = 8000
   const boundary = nextBerlinLocalMidnightAfter(ref).getTime();
   return Math.max(1500, boundary + graceMs - ref.getTime());
 }
+
+/** Lesetext für Tagesabschluss: ein Kalendertag Europe/Berlin (Zahlungseingänge) 00:00–23:59. */
+export function formatBerlinBusinessDayRangeDe(ymd: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  if (!m) return ymd;
+  const [, y, mo, d] = m;
+  return `${d}.${mo}.${y}, 00:00 Uhr bis ${d}.${mo}.${y}, 23:59 Uhr (Europe/Berlin)`;
+}
+
+/** Erster bis letzter Kalendertag des Monats YYYY-MM (Europe/Berlin), als Lesetext. */
+export function formatBerlinYearMonthRangeDe(ym: string): string {
+  const days = enumerateBerlinMonthDays(ym);
+  if (days.length === 0) return ym;
+  const first = days[0];
+  const last = days[days.length - 1];
+  const fmt = (ymd: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+    if (!m) return ymd;
+    const [, y, mo, d] = m;
+    return `${d}.${mo}.${y}`;
+  };
+  return `${fmt(first)}, 00:00 Uhr bis ${fmt(last)}, 23:59 Uhr (Europe/Berlin)`;
+}

@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
-import { acceptanceDir, getDataRoot, getDbFilePath, invoicesDir, uploadsDir } from "./dataPaths.js";
+import {
+  acceptanceDir,
+  getDataRoot,
+  getDbFilePath,
+  invoicesDir,
+  reparaturenLabelsDir,
+  reparaturenPdfsDir,
+  uploadsDir,
+} from "./dataPaths.js";
 
 export type DataBackupResult = { ok: true; dir: string; at: string } | { ok: false; error: string };
 
@@ -28,6 +36,8 @@ export async function runDataBackup(db: Database.Database): Promise<DataBackupRe
     for (const [name, abs] of [
       ["invoices", invoicesDir()],
       ["acceptance", acceptanceDir()],
+      ["reparaturen/pdfs", reparaturenPdfsDir()],
+      ["reparaturen/labels", reparaturenLabelsDir()],
       ["uploads", uploadsDir()],
     ] as const) {
       if (fs.existsSync(abs)) {

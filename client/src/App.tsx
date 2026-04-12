@@ -25,6 +25,7 @@ const PlaceholderPage = lazy(() => import("./pages/PlaceholderPage").then((m) =>
 const NetworkWizard = lazy(() => import("./pages/NetworkWizard").then((m) => ({ default: m.NetworkWizard })));
 const NetworkOrdersPage = lazy(() => import("./pages/NetworkOrdersPage").then((m) => ({ default: m.NetworkOrdersPage })));
 const NetworkAdminPage = lazy(() => import("./pages/NetworkAdminPage").then((m) => ({ default: m.NetworkAdminPage })));
+const TeileBestellenPage = lazy(() => import("./pages/TeileBestellenPage").then((m) => ({ default: m.TeileBestellenPage })));
 
 function SuspenseWrap({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoadingFallback />}>{children}</Suspense>;
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/werkstatt" element={<SuspenseWrap><Workshop /></SuspenseWrap>} />
         <Route path="/auftraege" element={<SuspenseWrap><Workshop pageTitle="Auftragsverwaltung" /></SuspenseWrap>} />
         <Route path="/kunden" element={<SuspenseWrap><KundenPage /></SuspenseWrap>} />
+        <Route path="/teile-bestellen" element={<SuspenseWrap><TeileBestellenPage /></SuspenseWrap>} />
         <Route path="/track" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
         <Route path="/track/:code" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
         <Route path="/lager" element={<SuspenseWrap><LagerPage /></SuspenseWrap>} />

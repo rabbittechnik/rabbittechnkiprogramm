@@ -27,12 +27,21 @@ CREATE TABLE IF NOT EXISTS services (
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   price_cents INTEGER NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  category TEXT NOT NULL DEFAULT 'sonstiges'
+);
+
+CREATE TABLE IF NOT EXISTS repair_order_sequences (
+  year TEXT PRIMARY KEY,
+  last_seq INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS repairs (
   id TEXT PRIMARY KEY,
   tracking_code TEXT NOT NULL UNIQUE,
+  repair_order_number TEXT,
+  repair_order_pdf_path TEXT,
+  repair_order_label_pdf_path TEXT,
   customer_id TEXT NOT NULL REFERENCES customers(id),
   device_id TEXT NOT NULL REFERENCES devices(id),
   problem_key TEXT,
@@ -55,6 +64,8 @@ CREATE TABLE IF NOT EXISTS repairs (
   acceptance_pdf_path TEXT,
   is_test INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_repairs_order_number ON repairs(repair_order_number) WHERE repair_order_number IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS repair_services (
   repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,
@@ -221,4 +232,39 @@ CREATE TABLE IF NOT EXISTS network_order_items (
 CREATE INDEX IF NOT EXISTS idx_network_orders_customer ON network_orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_network_orders_status ON network_orders(status);
 CREATE INDEX IF NOT EXISTS idx_network_order_items_order ON network_order_items(order_id);
+
+CREATE TABLE IF NOT EXISTS hardware_catalog_orders (
+  id TEXT PRIMARY KEY,
+  reference_code TEXT NOT NULL UNIQUE,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  status TEXT NOT NULL DEFAULT 'angebot',
+  markup_bps INTEGER NOT NULL DEFAULT 1000,
+  total_sale_cents INTEGER NOT NULL,
+  total_purchase_cents INTEGER NOT NULL,
+  signature_data_url TEXT,
+  send_customer_email INTEGER NOT NULL DEFAULT 0,
+  customer_email_sent INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS hardware_catalog_order_lines (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES hardware_catalog_orders(id) ON DELETE CASCADE,
+  product_id TEXT NOT NULL,
+  product_name TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  category_label TEXT NOT NULL,
+  subcategory_id TEXT NOT NULL,
+  subcategory_label TEXT NOT NULL,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  unit_sale_cents INTEGER NOT NULL,
+  unit_purchase_cents INTEGER NOT NULL,
+  line_sale_cents INTEGER NOT NULL,
+  line_purchase_cents INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hardware_orders_customer ON hardware_catalog_orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_hardware_orders_created ON hardware_catalog_orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hardware_order_lines_order ON hardware_catalog_order_lines(order_id);
 `;
