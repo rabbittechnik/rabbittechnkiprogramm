@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { RabbitMark, BrandWordmark } from "./RabbitMark";
 import { useOfflineSync } from "../lib/useOfflineSync";
-import { getWorkshopTokenRole } from "../workshopAuth";
+import { getWorkshopToken, getWorkshopTokenRole } from "../workshopAuth";
 
 // ─── Navigation (UI Layer) ─────────────────────────────────────────────────
 const NAV_SECTIONS = [
@@ -100,7 +100,10 @@ export function AppShell() {
     return () => window.removeEventListener("rt-workshop-token-changed", onTok);
   }, []);
 
-  const benchSession = getWorkshopTokenRole() === "bench";
+  const workshopRole = getWorkshopTokenRole();
+  const benchSession = workshopRole === "bench";
+  /** Auf /werkstatt-montage immer nur Montage-Menü – auch ohne Token (nach Abmelden). */
+  const montageKioskNav = benchSession || location.pathname === "/werkstatt-montage";
 
   useEffect(() => {
     if (benchSession && !benchAllowedPath(location.pathname)) {
@@ -108,12 +111,20 @@ export function AppShell() {
     }
   }, [benchSession, location.pathname, navigate]);
 
+  /** Voll-Werkstatt-Token gehört nicht auf die Montage-URL (zweites Tablet / Lesezeichen). */
+  useEffect(() => {
+    if (location.pathname !== "/werkstatt-montage") return;
+    if (getWorkshopToken() && getWorkshopTokenRole() === "workshop") {
+      navigate("/werkstatt", { replace: true });
+    }
+  }, [location.pathname, navigate, authBump]);
+
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
 
   const isHome = location.pathname === "/";
-  const flatForLabel = benchSession ? BENCH_NAV : FLAT_NAV;
+  const flatForLabel = montageKioskNav ? BENCH_NAV : FLAT_NAV;
   const currentLabel =
     flatForLabel.find((n) => n.to === location.pathname)?.label ??
     (location.pathname === "/werkstatt-montage" ? "Montage-Tablet" : undefined);
@@ -159,10 +170,10 @@ export function AppShell() {
       <header className="shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 border-b border-[#00d4ff]/20 bg-[#060b13]/95 backdrop-blur-sm sticky top-0 z-30">
         {/* Logo → Dashboard (großes Touch-Target) */}
         <Link
-          to={benchSession ? "/werkstatt-montage" : "/"}
+          to={montageKioskNav ? "/werkstatt-montage" : "/"}
           className="flex items-center gap-2 sm:gap-3 rounded-xl shrink-0 p-1.5 -ml-1.5 active:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4ff]/60"
-          title={benchSession ? "Montage" : "Dashboard"}
-          aria-label={benchSession ? "Rabbit Technik – Montage" : "Rabbit Technik – Dashboard"}
+          title={montageKioskNav ? "Montage" : "Dashboard"}
+          aria-label={montageKioskNav ? "Rabbit Technik – Montage" : "Rabbit Technik – Dashboard"}
         >
           <RabbitMark className="w-9 h-9 sm:w-10 sm:h-10" />
           <span className="hidden sm:block">
@@ -180,7 +191,7 @@ export function AppShell() {
         <div className="flex-1" />
 
         {/* Quick Links – Tablet-Größe */}
-        {!benchSession && (
+        {!montageKioskNav && (
           <Link
             to="/buchhaltung-reports"
             className="hidden sm:inline-flex items-center rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/20 hover:border-amber-300/50 active:scale-[0.97] transition-all whitespace-nowrap"
@@ -251,7 +262,7 @@ export function AppShell() {
               </button>
             </div>
 
-            {benchSession ? (
+            {montageKioskNav ? (
               <div className="py-2">
                 <p className="px-5 py-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Montage</p>
                 {BENCH_NAV.map((item) => {

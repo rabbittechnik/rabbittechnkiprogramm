@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { fetchWorkshop } from "../api";
 import { formatDeBerlin } from "../lib/formatBerlin";
 import { parseScanToTrackingCode } from "../lib/trackingScan";
 import { RtShell } from "../components/RtShell";
 import { useBenchGate } from "../useBenchGate";
+import { getWorkshopTokenRole } from "../workshopAuth";
 
 type Row = {
   id: string;
@@ -254,6 +255,10 @@ export function WorkshopBench() {
       alert(String(e));
     }
   };
+
+  if (getWorkshopTokenRole() === "workshop") {
+    return <Navigate to="/werkstatt" replace />;
+  }
 
   const repairStatus = selected?.status ?? "";
   const canLog = repairStatus === "in_reparatur";

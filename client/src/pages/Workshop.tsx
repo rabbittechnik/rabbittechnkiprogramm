@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { fetchWorkshop } from "../api";
 import { formatDeBerlin, formatDeBerlinDateOnly } from "../lib/formatBerlin";
 import { parseScanToTrackingCode } from "../lib/trackingScan";
 import { RtShell } from "../components/RtShell";
 import { TapToPayPhoneAnimation } from "../components/TapToPayPhoneAnimation";
 import { useWorkshopGate } from "../useWorkshopGate";
+import { getWorkshopTokenRole } from "../workshopAuth";
 
 type Row = {
   id: string;
@@ -77,6 +78,28 @@ const LOG_ACTION_PRESETS = [
   "Software / Einrichtung",
 ] as const;
 
+/** Nach Abholung (Status `abgeholt`) nicht mehr in der Werkstatt-Liste. */
+function workshopListRows(data: Row[]): Row[] {
+  return data.filter((r) => r.status !== "abgeholt");
+}
+
+/** Rahmenfarbe nach Status: neu rot, Diagnose blau, in Reparatur türkis, Teile gelb, fertig grün. */
+function workshopListRowClass(status: string, isSelected: boolean): string {
+  const byStatus: Record<string, string> = {
+    angenommen: "border-red-500/90 bg-red-950/35 hover:border-red-400",
+    diagnose: "border-blue-500/90 bg-blue-950/30 hover:border-blue-400",
+    in_reparatur: "border-cyan-400/90 bg-cyan-950/30 hover:border-cyan-300",
+    wartet_auf_teile: "border-amber-400/90 bg-amber-950/30 hover:border-amber-300",
+    teilgeliefert: "border-amber-400/90 bg-amber-950/30 hover:border-amber-300",
+    fertig: "border-emerald-500/90 bg-emerald-950/30 hover:border-emerald-400",
+  };
+  const base = byStatus[status] ?? "border-zinc-600/70 bg-[#060b13]/70 hover:border-zinc-500";
+  const selectedRing = isSelected
+    ? " ring-2 ring-[#39ff14] ring-offset-2 ring-offset-[#060b13] shadow-[0_0_22px_rgba(57,255,20,0.22)]"
+    : "";
+  return `border-2 ${base}${selectedRing}`;
+}
+
 export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: string }) {
   const { gate, loginPass, setLoginPass, loginErr, tryLogin, logout } = useWorkshopGate();
 
@@ -119,8 +142,9 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
   const refresh = useCallback(async (): Promise<Row[] | undefined> => {
     try {
       const data = await fetchWorkshop<Row[]>("/api/repairs");
-      setRows(data);
-      return data;
+      const next = workshopListRows(data);
+      setRows(next);
+      return next;
     } catch (e) {
       const err = e as Error & { code?: string };
       if (err.code === "WORKSHOP_AUTH" || err.message === "Anmeldung erforderlich") {
@@ -212,6 +236,10 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
     if (selected?.id === id && list) {
       const row = list.find((r) => r.id === id);
       if (row) setSelected(row);
+      else {
+        setSelected(null);
+        setDetail(null);
+      }
     }
   };
 
@@ -296,11 +324,17 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
 
   const reloadSelectedFromServer = async (repairId: string) => {
     const list = await fetchWorkshop<Row[]>("/api/repairs");
-    setRows(list);
-    const next = list.find((x) => x.id === repairId);
-    if (next) setSelected(next);
-    const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${repairId}`);
-    setDetail(d);
+    const visible = workshopListRows(list);
+    setRows(visible);
+    const next = visible.find((x) => x.id === repairId);
+    if (next) {
+      setSelected(next);
+      const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${repairId}`);
+      setDetail(d);
+    } else {
+      setSelected(null);
+      setDetail(null);
+    }
   };
 
   const submitLog = async () => {
@@ -386,11 +420,17 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
           setSumupData(null);
           setPickupErr(null);
           const list = await fetchWorkshop<Row[]>("/api/repairs");
-          setRows(list);
-          const next = list.find((x) => x.id === repairId);
-          if (next) setSelected(next);
-          const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${repairId}`);
-          setDetail(d);
+          const visible = workshopListRows(list);
+          setRows(visible);
+          const next = visible.find((x) => x.id === repairId);
+          if (next) {
+            setSelected(next);
+            const d = await fetchWorkshop<RepairDetailPayload>(`/api/repairs/${repairId}`);
+            setDetail(d);
+          } else {
+            setSelected(null);
+            setDetail(null);
+          }
         }
       } catch {
         /* z. B. SumUp nicht konfiguriert */
@@ -423,6 +463,10 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
       setPickupErr(String(e));
     }
   };
+
+  if (getWorkshopTokenRole() === "bench") {
+    return <Navigate to="/werkstatt-montage" replace />;
+  }
 
   if (gate === "loading") {
     return (
@@ -500,11 +544,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 key={r.id}
                 type="button"
                 onClick={() => setSelected(r)}
-                className={`w-full text-left rounded-xl border px-4 py-3 transition-all ${
-                  selected?.id === r.id
-                    ? "border-[#39ff14]/60 bg-[#39ff14]/10 shadow-[0_0_20px_rgba(57,255,20,0.15)]"
-                    : "border-[#00d4ff]/20 bg-[#060b13]/60 hover:border-[#00d4ff]/40"
-                }`}
+                className={`w-full text-left rounded-xl px-4 py-3 transition-all ${workshopListRowClass(r.status, selected?.id === r.id)}`}
               >
                 <div className="flex justify-between gap-2">
                   <span className="font-mono text-[#00d4ff]">

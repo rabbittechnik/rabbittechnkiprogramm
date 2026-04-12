@@ -6,20 +6,12 @@ export type BenchGateState = "loading" | "login" | "ok" | "no_bench";
 
 /**
  * Montage-Tablet: eigenes Passwort (RABBIT_BENCH_PASSWORD), Token-Rolle „bench“.
- * Voll-Werkstatt-Token auf dieser Seite wird verworfen, damit keine 403-Loops entstehen.
  */
 export function useBenchGate() {
   const [gate, setGate] = useState<BenchGateState>("loading");
   const [loginPass, setLoginPass] = useState("");
   const [loginErr, setLoginErr] = useState<string | null>(null);
   const [noBenchHint, setNoBenchHint] = useState<string | null>(null);
-
-  useEffect(() => {
-    const t = getWorkshopToken();
-    if (t && getWorkshopTokenRole() === "workshop") {
-      setWorkshopToken(null);
-    }
-  }, []);
 
   const checkSession = useCallback(async () => {
     try {
