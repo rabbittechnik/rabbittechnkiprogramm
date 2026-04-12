@@ -150,14 +150,17 @@ export async function writeInvoicePdf(
 
   const repairLogs = db
     .prepare(
-      `SELECT logged_at, action_type, description, duration_minutes FROM repair_logs WHERE repair_id = ? ORDER BY datetime(logged_at) ASC, id ASC`
+      `SELECT logged_at, action_type, description, duration_minutes, created_by FROM repair_logs WHERE repair_id = ? ORDER BY datetime(logged_at) ASC, id ASC`
     )
     .all(repairId) as {
       logged_at: string;
       action_type: string;
       description: string;
       duration_minutes: number | null;
+      created_by: string;
     }[];
+  const annahmeLogs = repairLogs.filter((l) => l.created_by === "annahme");
+  const werkstattLogs = repairLogs.filter((l) => l.created_by !== "annahme");
 
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -343,10 +346,14 @@ export async function writeInvoicePdf(
   }
   y -= 6;
 
-  if (repairLogs.length > 0) {
+  const drawLogBlock = (
+    title: string,
+    logs: { logged_at: string; action_type: string; description: string; duration_minutes: number | null }[]
+  ) => {
+    if (logs.length === 0) return;
     ensureBodySpace(M + 100);
-    sectionTitle("Arbeitsprotokoll");
-    for (const lg of repairLogs) {
+    sectionTitle(title);
+    for (const lg of logs) {
       ensureBodySpace(M + 72);
       const timeLbl = formatDeBerlin(lg.logged_at, { dateStyle: "short", timeStyle: "short" });
       const dur = lg.duration_minutes != null ? ` · ${lg.duration_minutes} Min.` : "";
@@ -359,7 +366,10 @@ export async function writeInvoicePdf(
       y -= 4;
     }
     y -= 6;
-  }
+  };
+
+  drawLogBlock("Kundennachträge / Zusagen (Annahme)", annahmeLogs);
+  drawLogBlock("Arbeitsprotokoll (Werkstatt)", werkstattLogs);
 
   const total = Number(repair.total_cents);
   const totalBoxH = 44;

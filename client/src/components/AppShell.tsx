@@ -11,6 +11,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/", label: "Dashboard" },
       { to: "/annahme", label: "Reparaturannahme" },
+      { to: "/annahme/nachtrag", label: "Auftrag nachtragen" },
       { to: "/werkstatt", label: "Auftragsverwaltung" },
       { to: "/werkstatt-montage", label: "Montage-Tablet" },
       { to: "/kunden", label: "Kundenverwaltung" },

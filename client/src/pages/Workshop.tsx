@@ -3,6 +3,7 @@ import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { fetchWorkshop } from "../api";
 import { formatDeBerlin, formatDeBerlinDateOnly } from "../lib/formatBerlin";
 import { parseScanToTrackingCode } from "../lib/trackingScan";
+import { REPAIR_STATUSES_EXCEPT_ABGEHOLT, repairStatusLabelDe } from "../lib/workshopRepairStatuses";
 import { RtShell } from "../components/RtShell";
 import { TapToPayPhoneAnimation } from "../components/TapToPayPhoneAnimation";
 import { RepairSoundEnableButton } from "../components/RepairSoundEnableButton";
@@ -14,6 +15,7 @@ import {
   useNewRepairNotification,
   useNewRepairParty,
 } from "../hooks/useNewRepairNotification";
+import { useWorkshopCustomerAmendmentAttention } from "../hooks/useWorkshopCustomerAmendmentAttention";
 import { NewRepairPartyOverlay } from "../components/NewRepairPartyOverlay";
 
 type Row = {
@@ -29,21 +31,12 @@ type Row = {
   updated_at: string;
   created_at: string;
   is_test?: number | boolean;
+  customer_amendment_count?: number | boolean;
   customer_name: string;
   device_type: string;
   brand: string | null;
   model: string | null;
 };
-
-const STATUSES = [
-  "angenommen",
-  "diagnose",
-  "wartet_auf_teile",
-  "teilgeliefert",
-  "in_reparatur",
-  "fertig",
-  "abgeholt",
-];
 
 type RepairLogRow = {
   id: string;
@@ -95,7 +88,12 @@ function workshopListRows(data: Row[]): Row[] {
 }
 
 /** Rahmenfarbe nach Status: neu rot, Diagnose blau, in Reparatur türkis, Teile gelb, fertig grün. */
-function workshopListRowClass(status: string, isSelected: boolean, partyHighlight?: boolean): string {
+function workshopListRowClass(
+  status: string,
+  isSelected: boolean,
+  partyHighlight?: boolean,
+  amendmentPulse?: boolean
+): string {
   const byStatus: Record<string, string> = {
     angenommen: "border-red-500/90 bg-red-950/35 hover:border-red-400",
     diagnose: "border-blue-500/90 bg-blue-950/30 hover:border-blue-400",
@@ -109,7 +107,8 @@ function workshopListRowClass(status: string, isSelected: boolean, partyHighligh
     ? " ring-2 ring-[#39ff14] ring-offset-2 ring-offset-[#060b13] shadow-[0_0_22px_rgba(57,255,20,0.22)]"
     : "";
   const party = partyHighlight ? " animate-rt-party-row" : "";
-  return `border-2 ${base}${selectedRing}${party}`;
+  const amend = !partyHighlight && amendmentPulse ? " animate-rt-amendment-row" : "";
+  return `border-2 ${base}${selectedRing}${party}${amend}`;
 }
 
 export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: string }) {
@@ -175,6 +174,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
 
   useNewRepairNotification({ gate, refresh });
   const { highlightIds, partyActive } = useNewRepairParty();
+  const { hasUnackedAmendment, acknowledgeAmendmentsForRepair } = useWorkshopCustomerAmendmentAttention(rows);
 
   const openRepairByTrackingCode = useCallback(
     async (raw: string): Promise<boolean> => {
@@ -245,6 +245,11 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
         else console.error(e);
       });
   }, [selected, logout]);
+
+  useEffect(() => {
+    if (!selected || !detail) return;
+    acknowledgeAmendmentsForRepair(selected.id);
+  }, [selected?.id, detail, rows, acknowledgeAmendmentsForRepair]);
 
   useEffect(() => {
     if (!selected) return;
@@ -589,18 +594,34 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 className={`w-full text-left rounded-xl px-4 py-3 transition-all ${workshopListRowClass(
                   r.status,
                   selected?.id === r.id,
-                  highlightIds.has(r.id)
+                  highlightIds.has(r.id),
+                  hasUnackedAmendment(r.id)
                 )}`}
               >
                 <div className="flex justify-between gap-2">
-                  <span className="font-mono text-[#00d4ff]">
+                  <span className="font-mono text-[#00d4ff] flex flex-wrap items-center gap-1">
                     {r.is_test ? <span className="text-red-400 font-bold mr-1 text-[10px] uppercase">Test</span> : null}
+                    {Number(r.customer_amendment_count ?? 0) > 0 ? (
+                      <span
+                        className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500/25 border border-amber-400/60 text-amber-200 shrink-0"
+                        title={
+                          hasUnackedAmendment(r.id)
+                            ? "Neuer Nachtrag aus der Annahme – Zeile blinkt bis zur Ansicht"
+                            : "Kundennachtrag / Zusatz aus der Annahme dokumentiert"
+                        }
+                        aria-label="Kundennachtrag dokumentiert"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+                        </svg>
+                      </span>
+                    ) : null}
                     {r.tracking_code}
                     {r.repair_order_number ? (
                       <span className="block text-[10px] text-zinc-500 font-mono mt-0.5">{r.repair_order_number}</span>
                     ) : null}
                   </span>
-                  <span className="text-xs text-amber-300/90">{r.status.replace(/_/g, " ")}</span>
+                  <span className="text-xs text-amber-300/90">{repairStatusLabelDe(r.status)}</span>
                 </div>
                 <p className="text-sm text-zinc-300 mt-1">
                   {r.customer_name} · {r.device_type} {[r.brand, r.model].filter(Boolean).join(" ")}
@@ -659,7 +680,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
               <div>
                 <p className="rt-label-neon mb-2">Status</p>
                 <div className="flex flex-wrap gap-2">
-                  {STATUSES.map((s) => (
+                  {REPAIR_STATUSES_EXCEPT_ABGEHOLT.map((s) => (
                     <button
                       key={s}
                       type="button"
@@ -670,7 +691,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                       }`}
                       onClick={() => void setStatus(selected.id, s)}
                     >
-                      {s.replace(/_/g, " ")}
+                      {repairStatusLabelDe(s)}
                     </button>
                   ))}
                 </div>
@@ -767,7 +788,14 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                             {formatDeBerlin(lg.timestamp, { dateStyle: "short", timeStyle: "short" })}
                             {lg.duration_minutes != null ? ` · ${lg.duration_minutes} Min.` : ""}
                           </p>
-                          <p className="text-violet-200/95 font-medium">{lg.action_type}</p>
+                          <p className="text-violet-200/95 font-medium flex flex-wrap items-center gap-2">
+                            {lg.action_type}
+                            {lg.created_by === "annahme" ? (
+                              <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-400/50 text-amber-200/95 bg-amber-500/15">
+                                Annahme
+                              </span>
+                            ) : null}
+                          </p>
                           <p className="text-zinc-400 text-xs whitespace-pre-wrap">{lg.description}</p>
                         </li>
                       ))

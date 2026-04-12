@@ -46,6 +46,7 @@ import {
   partStatusLabelDe,
 } from "./lib/mail.js";
 import { buildPublicTrackingUrl } from "./lib/publicUrl.js";
+import { formatDeBerlinNow } from "./lib/formatBerlin.js";
 import { queueCustomerRepairNotification } from "./lib/repairCustomerNotify.js";
 import { uploadsDir } from "./lib/dataPaths.js";
 import { runDataBackup } from "./lib/dataBackup.js";
@@ -250,7 +251,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
       const rows = db
         .prepare(
           `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.updated_at, r.created_at, r.is_test,
-           c.name AS customer_name, d.device_type, d.brand, d.model
+           c.name AS customer_name, d.device_type, d.brand, d.model,
+           (SELECT COUNT(1) FROM repair_logs l WHERE l.repair_id = r.id AND l.created_by = 'annahme') AS customer_amendment_count
            FROM repairs r
            JOIN customers c ON c.id = r.customer_id
            JOIN devices d ON d.id = r.device_id
@@ -265,7 +267,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
       .prepare(
         `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
          r.is_test,
-         c.name as customer_name, d.device_type, d.brand, d.model
+         c.name as customer_name, d.device_type, d.brand, d.model,
+         (SELECT COUNT(1) FROM repair_logs l WHERE l.repair_id = r.id AND l.created_by = 'annahme') AS customer_amendment_count
          FROM repairs r
          JOIN customers c ON c.id = r.customer_id
          JOIN devices d ON d.id = r.device_id
@@ -677,6 +680,86 @@ export function registerRoutes(app: Express, db: Database.Database) {
       )
       .get(logId);
     res.status(201).json({ log });
+  });
+
+  /** Kundennachtrag an der Annahme (Zusatzleistungen + dokumentierte Zusage; Werkstatt-Hinweis & Rechnung). */
+  app.post("/api/repairs/:id/customer-amendment", requireWorkshopFullAuth, async (req, res) => {
+    if (isBenchRequest(req)) {
+      res.status(403).json({ error: "Nur an der vollen Werkstatt / Annahme." });
+      return;
+    }
+    const id = paramStr(req.params.id);
+    const row = db.prepare(`SELECT id, status, tracking_code FROM repairs WHERE id = ?`).get(id) as
+      | { id: string; status: string; tracking_code: string }
+      | undefined;
+    if (!row) {
+      res.status(404).json({ error: "Auftrag nicht gefunden" });
+      return;
+    }
+    if (row.status === "abgeholt") {
+      res.status(400).json({ error: "Abgeholte Aufträge können nicht mehr nachträglich geändert werden." });
+      return;
+    }
+    const body = req.body as { channel?: unknown; note?: unknown; service_codes?: unknown };
+    const channel = String(body.channel ?? "").trim();
+    if (channel !== "telefon" && channel !== "vor_ort") {
+      res.status(400).json({ error: 'channel: "telefon" oder "vor_ort" erforderlich' });
+      return;
+    }
+    const note = String(body.note ?? "").trim();
+    if (note.length < 3) {
+      res.status(400).json({ error: "Notiz (mindestens 3 Zeichen) erforderlich." });
+      return;
+    }
+    const rawCodes = Array.isArray(body.service_codes) ? body.service_codes.map(String).filter(Boolean) : [];
+    const codes = [...new Set(rawCodes)];
+    const serviceRows = codes.length ? getServiceRowsByCodes(db, codes) : [];
+    if (codes.length && serviceRows.length !== codes.length) {
+      res.status(400).json({ error: "Unbekannter Leistungscode in service_codes." });
+      return;
+    }
+    const channelDe = channel === "telefon" ? "telefonisch" : "persönlich vor Ort";
+    const whenDe = formatDeBerlinNow({ dateStyle: "long", timeStyle: "short" });
+    const logLines = [
+      `Feststellung (Annahme): Der Kunde hat am ${whenDe} (${channelDe}) folgendes mitgeteilt bzw. genehmigt:`,
+      "",
+      note,
+      "",
+    ];
+    if (serviceRows.length) {
+      logLines.push("Zusätzlich gebuchte Leistungen (Katalogpreise):");
+      for (const s of serviceRows) {
+        logLines.push(`- ${s.name}: ${(s.price_cents / 100).toFixed(2)} €`);
+      }
+      logLines.push("");
+    }
+    logLines.push("Dieser Eintrag dient der Nachvollziehbarkeit gegenüber der Werkstatt und auf der Rechnung.");
+
+    const logDescription = logLines.join("\n");
+    const actionType = `Kundennachtrag (${channelDe})`;
+    const logId = nanoid();
+    try {
+      const tx = db.transaction(() => {
+        const ins = db.prepare(
+          `INSERT OR REPLACE INTO repair_services (repair_id, service_id, price_cents) VALUES (?,?,?)`
+        );
+        for (const s of serviceRows) {
+          ins.run(id, s.id, s.price_cents);
+        }
+        recalculateRepairTotal(db, id);
+        db.prepare(
+          `INSERT INTO repair_logs (id, repair_id, logged_at, action_type, description, duration_minutes, created_by)
+           VALUES (?, ?, datetime('now'), ?, ?, NULL, 'annahme')`
+        ).run(logId, id, actionType, logDescription);
+        db.prepare(`UPDATE repairs SET updated_at = datetime('now') WHERE id = ?`).run(id);
+      });
+      tx();
+      scheduleSyncRepairOrderPdfs(db, id, req);
+      res.status(201).json({ ok: true, log_id: logId });
+    } catch (e) {
+      console.error("[repair] customer-amendment:", e);
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   app.patch("/api/repairs/:id/status", requireWorkshopAuth, async (req, res) => {

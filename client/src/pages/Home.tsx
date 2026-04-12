@@ -32,6 +32,18 @@ const tiles: {
     ),
   },
   {
+    to: "/annahme/nachtrag",
+    label: "Auftrag nachtragen",
+    glowRgb: "120, 220, 255",
+    border: "border-sky-400/50",
+    iconWrap: "from-sky-400/25 to-cyan-600/5 text-sky-100 shadow-[0_0_18px_rgba(120,220,255,0.35)]",
+    icon: (
+      <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+  },
+  {
     to: "/kunden",
     label: "Kundenkonten",
     glowRgb: "0, 180, 255",

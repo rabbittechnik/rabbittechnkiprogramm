@@ -3,6 +3,7 @@ import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { fetchWorkshop } from "../api";
 import { formatDeBerlin } from "../lib/formatBerlin";
 import { parseScanToTrackingCode } from "../lib/trackingScan";
+import { REPAIR_STATUSES_EXCEPT_ABGEHOLT, repairStatusLabelDe } from "../lib/workshopRepairStatuses";
 import { RtShell } from "../components/RtShell";
 import { RepairSoundEnableButton } from "../components/RepairSoundEnableButton";
 import { useBenchGate } from "../useBenchGate";
@@ -13,6 +14,7 @@ import {
   useNewRepairNotification,
   useNewRepairParty,
 } from "../hooks/useNewRepairNotification";
+import { useWorkshopCustomerAmendmentAttention } from "../hooks/useWorkshopCustomerAmendmentAttention";
 import { NewRepairPartyOverlay } from "../components/NewRepairPartyOverlay";
 
 type Row = {
@@ -23,6 +25,7 @@ type Row = {
   updated_at: string;
   created_at: string;
   is_test?: number | boolean;
+  customer_amendment_count?: number | boolean;
   customer_name: string;
   device_type: string;
   brand: string | null;
@@ -106,6 +109,7 @@ export function WorkshopBench() {
 
   useNewRepairNotification({ gate, refresh });
   const { highlightIds, partyActive } = useNewRepairParty();
+  const { hasUnackedAmendment, acknowledgeAmendmentsForRepair } = useWorkshopCustomerAmendmentAttention(rows);
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -124,6 +128,11 @@ export function WorkshopBench() {
     }
     void loadDetail(selected.id);
   }, [selected, loadDetail]);
+
+  useEffect(() => {
+    if (!selected || !detail) return;
+    acknowledgeAmendmentsForRepair(selected.id);
+  }, [selected?.id, detail, rows, acknowledgeAmendmentsForRepair]);
 
   useEffect(() => {
     if (!selected) return;
@@ -291,7 +300,6 @@ export function WorkshopBench() {
   const repairStatus = selected?.status ?? "";
   const canLog = repairStatus === "in_reparatur";
   const canFertig = repairStatus === "in_reparatur" && (detail?.logs?.length ?? 0) > 0;
-  const canStart = selected && START_STATUSES.includes(repairStatus as (typeof START_STATUSES)[number]);
 
   if (gate === "loading") {
     return (
@@ -395,7 +403,11 @@ export function WorkshopBench() {
                 type="button"
                 onClick={() => setSelected(r)}
                 className={`w-full text-left rounded-xl border px-4 py-3 transition-all ${
-                  highlightIds.has(r.id) ? "animate-rt-party-row " : ""
+                  highlightIds.has(r.id)
+                    ? "animate-rt-party-row "
+                    : hasUnackedAmendment(r.id)
+                      ? "animate-rt-amendment-row "
+                      : ""
                 }${
                   selected?.id === r.id
                     ? "border-[#39ff14]/60 bg-[#39ff14]/10 shadow-[0_0_20px_rgba(57,255,20,0.15)]"
@@ -403,14 +415,29 @@ export function WorkshopBench() {
                 }`}
               >
                 <div className="flex justify-between gap-2">
-                  <span className="font-mono text-[#00d4ff]">
+                  <span className="font-mono text-[#00d4ff] flex flex-wrap items-center gap-1">
                     {r.is_test ? <span className="text-red-400 font-bold mr-1 text-[10px] uppercase">Test</span> : null}
+                    {Number(r.customer_amendment_count ?? 0) > 0 ? (
+                      <span
+                        className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500/25 border border-amber-400/60 text-amber-200 shrink-0"
+                        title={
+                          hasUnackedAmendment(r.id)
+                            ? "Neuer Nachtrag aus der Annahme – Zeile blinkt bis zur Ansicht"
+                            : "Kundennachtrag / Zusatz aus der Annahme dokumentiert"
+                        }
+                        aria-label="Kundennachtrag dokumentiert"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+                        </svg>
+                      </span>
+                    ) : null}
                     {r.tracking_code}
                     {r.repair_order_number ? (
                       <span className="block text-[10px] text-zinc-500 font-mono mt-0.5">{r.repair_order_number}</span>
                     ) : null}
                   </span>
-                  <span className="text-xs text-amber-300/90">{r.status.replace(/_/g, " ")}</span>
+                  <span className="text-xs text-amber-300/90">{repairStatusLabelDe(r.status)}</span>
                 </div>
                 <p className="text-sm text-zinc-300 mt-1">
                   {r.customer_name} · {r.device_type} {[r.brand, r.model].filter(Boolean).join(" ")}
@@ -442,32 +469,38 @@ export function WorkshopBench() {
               <div>
                 <p className="rt-label-neon mb-2">Status</p>
                 <div className="flex flex-wrap gap-2">
-                  {canStart && (
-                    <button
-                      type="button"
-                      disabled={statusBusy}
-                      className="px-3 py-1.5 rounded-lg text-xs border border-[#00d4ff]/50 text-[#00d4ff] hover:bg-[#00d4ff]/10"
-                      onClick={() => void setStatus(selected.id, "in_reparatur")}
-                    >
-                      In Reparatur
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={statusBusy || !canFertig}
-                    className={`px-3 py-1.5 rounded-lg text-xs border ${
-                      canFertig
-                        ? "border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/10"
-                        : "border-zinc-600 text-zinc-600 cursor-not-allowed"
-                    }`}
-                    title={!canFertig ? "Zuerst Protokolleintrag speichern" : undefined}
-                    onClick={() => void setStatus(selected.id, "fertig")}
-                  >
-                    Fertig
-                  </button>
+                  {REPAIR_STATUSES_EXCEPT_ABGEHOLT.map((s) => {
+                    const isCurrent = selected.status === s;
+                    const disabledFertig = s === "fertig" && !canFertig;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        disabled={statusBusy || disabledFertig}
+                        title={
+                          s === "fertig" && !canFertig
+                            ? repairStatus === "in_reparatur"
+                              ? "Zuerst Arbeitsprotokoll (Tätigkeit + Beschreibung) speichern"
+                              : "„Fertig“ nur nach „In Reparatur“ mit Protokolleintrag"
+                            : undefined
+                        }
+                        className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${
+                          isCurrent
+                            ? "border-[#39ff14] text-[#39ff14] bg-[#39ff14]/10"
+                            : disabledFertig
+                              ? "border-zinc-600 text-zinc-600 cursor-not-allowed"
+                              : "border-[#00d4ff]/25 text-zinc-400 hover:border-[#00d4ff]/50"
+                        }`}
+                        onClick={() => void setStatus(selected.id, s)}
+                      >
+                        {repairStatusLabelDe(s)}
+                      </button>
+                    );
+                  })}
                 </div>
                 <p className="text-[10px] text-zinc-500 mt-1">
-                  Abholung und Zahlung nur an der vollen Werkstatt. Protokoll nur während „In Reparatur“.
+                  Abholung („Abgeholt“) und Zahlung nur an der vollen Werkstatt. Arbeitsprotokoll nur während „In
+                  Reparatur“. Label-Scan setzt weiterhin „In Reparatur“, wenn der Auftrag noch wartet.
                 </p>
               </div>
 
@@ -579,7 +612,14 @@ export function WorkshopBench() {
                               <p className="text-[11px] text-zinc-500 font-mono">
                                 {formatDeBerlin(lg.timestamp, { dateStyle: "short", timeStyle: "short" })}
                               </p>
-                              <p className="text-violet-200/95 font-medium">{lg.action_type}</p>
+                              <p className="text-violet-200/95 font-medium flex flex-wrap items-center gap-2">
+                                {lg.action_type}
+                                {lg.created_by === "annahme" ? (
+                                  <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-400/50 text-amber-200/95 bg-amber-500/15">
+                                    Annahme
+                                  </span>
+                                ) : null}
+                              </p>
                               <p className="text-zinc-400 text-xs whitespace-pre-wrap">{lg.description}</p>
                             </li>
                           ))

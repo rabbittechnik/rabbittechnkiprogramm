@@ -320,12 +320,33 @@ a:not([class]),
   position: relative;
 }
 
+/* Neue Infos aus der Annahme (Nachtrag): deutlicher Amber-Puls am Kartenrand */
+@keyframes rt-amendment-row {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px rgba(245, 158, 11, 0.35),
+      0 0 18px rgba(245, 158, 11, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px rgba(251, 191, 36, 0.95),
+      0 0 26px rgba(251, 191, 36, 0.45);
+  }
+}
+.animate-rt-amendment-row {
+  animation: rt-amendment-row 0.9s ease-in-out infinite;
+  z-index: 5;
+  position: relative;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-rt-party-vignette,
   .animate-rt-party-spin,
   .animate-rt-party-strobe,
   .animate-rt-party-sparkle,
-  .animate-rt-party-row {
+  .animate-rt-party-row,
+  .animate-rt-amendment-row {
     animation: none !important;
   }
 }

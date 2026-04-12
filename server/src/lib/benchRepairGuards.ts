@@ -20,6 +20,14 @@ export function benchHasCompletionLog(db: Database.Database, repairId: string): 
   return Boolean(ok);
 }
 
+const BENCH_OPEN_STATUSES = new Set([
+  "angenommen",
+  "diagnose",
+  "wartet_auf_teile",
+  "teilgeliefert",
+  "in_reparatur",
+]);
+
 export function assertBenchStatusAllowed(
   db: Database.Database,
   repairId: string,
@@ -30,16 +38,8 @@ export function assertBenchStatusAllowed(
 
   const deny = (msg: string) => ({ ok: false as const, error: msg });
 
-  if (nextStatus === "abgeholt" || nextStatus === "angenommen" || nextStatus === "diagnose") {
-    return deny("Dieser Statuswechsel ist mit der Montage-Anmeldung nicht erlaubt.");
-  }
-
-  if (nextStatus === "in_reparatur") {
-    const from = ["angenommen", "diagnose", "wartet_auf_teile", "teilgeliefert"];
-    if (!from.includes(previousStatus)) {
-      return deny("„In Reparatur“ ist von diesem Status aus nicht freigegeben.");
-    }
-    return { ok: true };
+  if (nextStatus === "abgeholt") {
+    return deny("Abholung nur an der vollen Werkstatt.");
   }
 
   if (nextStatus === "fertig") {
@@ -52,10 +52,9 @@ export function assertBenchStatusAllowed(
     return { ok: true };
   }
 
-  if (nextStatus === "wartet_auf_teile" || nextStatus === "teilgeliefert") {
-    const from = ["in_reparatur", "wartet_auf_teile", "teilgeliefert"];
-    if (!from.includes(previousStatus)) {
-      return deny("Dieser Teile-Statuswechsel ist mit der Montage-Anmeldung nicht erlaubt.");
+  if (BENCH_OPEN_STATUSES.has(nextStatus)) {
+    if (previousStatus === "abgeholt") {
+      return deny("Abgeschlossene Aufträge können hier nicht mehr geändert werden.");
     }
     return { ok: true };
   }

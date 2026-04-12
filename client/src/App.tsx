@@ -13,6 +13,9 @@ import { parseScanToTrackingCode } from "./lib/trackingScan";
 // kleinerer initialer Bundle.
 const Home = lazy(() => import("./pages/Home").then((m) => ({ default: m.Home })));
 const Wizard = lazy(() => import("./pages/Wizard").then((m) => ({ default: m.Wizard })));
+const RepairAmendmentPage = lazy(() =>
+  import("./pages/RepairAmendmentPage").then((m) => ({ default: m.RepairAmendmentPage }))
+);
 const Workshop = lazy(() => import("./pages/Workshop").then((m) => ({ default: m.Workshop })));
 const WorkshopBench = lazy(() => import("./pages/WorkshopBench").then((m) => ({ default: m.WorkshopBench })));
 const KundenPage = lazy(() => import("./pages/KundenPage").then((m) => ({ default: m.KundenPage })));
@@ -72,6 +75,7 @@ export default function App() {
         {/* Business Layer: Datengetriebene Seiten */}
         <Route path="/" element={<SuspenseWrap><Home /></SuspenseWrap>} />
         <Route path="/annahme" element={<SuspenseWrap><Wizard /></SuspenseWrap>} />
+        <Route path="/annahme/nachtrag" element={<SuspenseWrap><RepairAmendmentPage /></SuspenseWrap>} />
         <Route path="/werkstatt" element={<SuspenseWrap><Workshop /></SuspenseWrap>} />
         <Route path="/werkstatt-montage" element={<SuspenseWrap><WorkshopBench /></SuspenseWrap>} />
         <Route path="/auftraege" element={<SuspenseWrap><Workshop pageTitle="Auftragsverwaltung" /></SuspenseWrap>} />
