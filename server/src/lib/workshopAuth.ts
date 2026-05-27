@@ -22,6 +22,10 @@ export function isBenchPasswordConfigured(): boolean {
   return Boolean(process.env.RABBIT_BENCH_PASSWORD?.length);
 }
 
+export function allowUnprotectedWorkshopAccess(): boolean {
+  return process.env.RABBIT_ALLOW_UNPROTECTED_WORKSHOP === "1";
+}
+
 /** Login: Klartext-Vergleich mit konfiguriertem Passwort */
 export function verifyWorkshopPassword(password: string): boolean {
   const expected = process.env.RABBIT_WORKSHOP_PASSWORD;
@@ -87,7 +91,7 @@ function bearerToken(req: Request): string | null {
 }
 
 export function isWorkshopFullAccess(req: Request): boolean {
-  if (!isWorkshopPasswordConfigured()) return true;
+  if (!isWorkshopPasswordConfigured()) return allowUnprotectedWorkshopAccess();
   return req.workshopRole === "workshop";
 }
 
@@ -97,8 +101,15 @@ export function isWorkshopFullAccess(req: Request): boolean {
  */
 export function requireWorkshopAuth(req: Request, res: Response, next: NextFunction): void {
   if (!isWorkshopPasswordConfigured()) {
-    delete req.workshopRole;
-    next();
+    if (allowUnprotectedWorkshopAccess()) {
+      delete req.workshopRole;
+      next();
+      return;
+    }
+    res.status(503).json({
+      error: "Werkstatt-Passwort nicht eingerichtet (RABBIT_WORKSHOP_PASSWORD setzen).",
+      code: "WORKSHOP_AUTH_NOT_CONFIGURED",
+    });
     return;
   }
   const tok = bearerToken(req);
@@ -121,8 +132,15 @@ export function requireWorkshopAuth(req: Request, res: Response, next: NextFunct
  */
 export function requireWorkshopFullAuth(req: Request, res: Response, next: NextFunction): void {
   if (!isWorkshopPasswordConfigured()) {
-    delete req.workshopRole;
-    next();
+    if (allowUnprotectedWorkshopAccess()) {
+      delete req.workshopRole;
+      next();
+      return;
+    }
+    res.status(503).json({
+      error: "Werkstatt-Passwort nicht eingerichtet (RABBIT_WORKSHOP_PASSWORD setzen).",
+      code: "WORKSHOP_AUTH_NOT_CONFIGURED",
+    });
     return;
   }
   const tok = bearerToken(req);

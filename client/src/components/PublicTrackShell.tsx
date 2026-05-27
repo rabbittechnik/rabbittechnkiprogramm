@@ -12,7 +12,7 @@ type PublicTrackShellProps = {
  */
 export function PublicTrackShell({ title, subtitle, children }: PublicTrackShellProps) {
   return (
-    <div className="rt-dashboard-bg -mx-4 min-h-[calc(100vh-3rem)] px-4 py-5 sm:py-6">
+    <div className="rt-dashboard-bg min-h-screen px-4 py-5 sm:py-6">
       <header className="flex flex-wrap items-center gap-3 mb-6 pb-4 border-b border-[#00d4ff]/25 shadow-[0_8px_32px_rgba(0,0,0,0.25)]">
         <div className="flex items-center gap-2 sm:gap-3 shrink-0 pointer-events-none select-none" aria-hidden>
           <RabbitMark className="w-9 h-9 sm:w-10 sm:h-10 opacity-95" />

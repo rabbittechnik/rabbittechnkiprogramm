@@ -35,6 +35,7 @@ import {
   signWorkshopToken,
   requireWorkshopAuth,
   requireWorkshopFullAuth,
+  allowUnprotectedWorkshopAccess,
 } from "./lib/workshopAuth.js";
 import {
   sendRepairAcceptedEmail,
@@ -115,8 +116,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
     });
   });
 
-  /** Öffentliche Kennzahlen für die Hauptseite */
-  app.get("/api/dashboard/summary", (_req, res) => {
+  /** Interne Kennzahlen fuer die Hauptseite. */
+  app.get("/api/dashboard/summary", requireWorkshopFullAuth, (_req, res) => {
     const openRow = db
       .prepare(`SELECT COUNT(*) as c FROM repairs WHERE status NOT IN ('abgeholt') AND is_test = 0`)
       .get() as { c: number };
@@ -196,13 +197,21 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
   app.get("/api/auth/status", (_req, res) => {
     res.json({
-      workshopAuthRequired: isWorkshopPasswordConfigured(),
+      workshopAuthRequired: !allowUnprotectedWorkshopAccess(),
       benchAuthConfigured: isBenchPasswordConfigured(),
+      workshopAuthConfigured: isWorkshopPasswordConfigured(),
     });
   });
 
   app.post("/api/auth/login", (req, res) => {
     if (!isWorkshopPasswordConfigured()) {
+      if (!allowUnprotectedWorkshopAccess()) {
+        res.status(503).json({
+          error: "Werkstatt-Passwort nicht eingerichtet (RABBIT_WORKSHOP_PASSWORD setzen).",
+          code: "WORKSHOP_AUTH_NOT_CONFIGURED",
+        });
+        return;
+      }
       res.json({
         token: null as string | null,
         workshopAuthRequired: false,
@@ -379,7 +388,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post("/api/repairs", async (req, res) => {
+  app.post("/api/repairs", requireWorkshopFullAuth, async (req, res) => {
     try {
       const body = req.body ?? {};
       const existingCustomerId = body.customer_id ? String(body.customer_id).trim() : "";

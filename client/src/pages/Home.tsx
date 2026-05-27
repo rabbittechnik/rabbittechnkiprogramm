@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { fetchJson } from "../api";
+import { fetchWorkshop } from "../api";
 import { RabbitMark, BrandWordmark } from "../components/RabbitMark";
 
 type Summary = {
@@ -244,7 +244,7 @@ export function Home() {
   const [sum, setSum] = useState<Summary | null>(null);
 
   useEffect(() => {
-    fetchJson<Summary>("/api/dashboard/summary")
+    fetchWorkshop<Summary>("/api/dashboard/summary")
       .then(setSum)
       .catch(() =>
         setSum({

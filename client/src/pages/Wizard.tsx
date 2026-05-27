@@ -248,7 +248,7 @@ export function Wizard() {
           phone: customerPhone || null,
         };
       }
-      const res = await fetchJson<{
+      const res = await fetchWorkshop<{
         repair: { id: string; repair_order_number?: string | null };
         tracking_code: string;
         confirmationEmailSkipped?: boolean;

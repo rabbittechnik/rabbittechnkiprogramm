@@ -3,6 +3,7 @@ import { Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { AppShell, PageLoadingFallback } from "./components/AppShell";
 import { getWorkshopToken, getWorkshopTokenRole } from "./workshopAuth";
 import { parseScanToTrackingCode } from "./lib/trackingScan";
+import { useWorkshopGate } from "./useWorkshopGate";
 
 // ─── UI Layer (PWA) ────────────────────────────────────────────────────────
 // AppShell = persistente Navigation, Dashboard, Menü „Buchhaltung & Reports",
@@ -67,11 +68,59 @@ function RepairAliasRedirect() {
   return <PageLoadingFallback />;
 }
 
+function InternalAppShell() {
+  const { gate, loginPass, setLoginPass, loginErr, tryLogin } = useWorkshopGate();
+
+  if (gate === "loading") {
+    return <PageLoadingFallback label="Werkstatt-Anmeldung pruefen..." />;
+  }
+
+  if (gate === "login") {
+    return (
+      <div className="rt-dashboard-bg min-h-screen flex items-center justify-center px-4">
+        <form
+          onSubmit={(e) => {
+            void tryLogin(e);
+          }}
+          className="rt-panel rt-panel-cyan w-full max-w-sm space-y-4 p-6"
+        >
+          <div>
+            <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">Interner Bereich</p>
+            <h1 className="text-2xl font-bold text-[#00d4ff] mt-1">Werkstatt-Anmeldung</h1>
+            <p className="text-sm text-zinc-400 mt-2">
+              Kunden koennen nur die Statusverfolgung sehen. Fuer Auftragsannahme und Verwaltung ist ein Passwort noetig.
+            </p>
+          </div>
+          <input
+            className="rt-input-neon w-full"
+            type="password"
+            placeholder="Passwort"
+            value={loginPass}
+            onChange={(e) => setLoginPass(e.target.value)}
+            autoComplete="current-password"
+          />
+          {loginErr && <p className="text-sm text-red-400">{loginErr}</p>}
+          <button type="submit" className="rt-btn-confirm w-full min-h-[52px]">
+            Anmelden
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  return <AppShell />;
+}
+
 export default function App() {
   return (
     <Routes>
+      {/* Oeffentliche Kundenseiten laufen ohne AppShell, damit kein Werkstatt-Menue sichtbar ist. */}
+      <Route path="/track" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
+      <Route path="/track/:code" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
+      <Route path="/repair/:code" element={<RepairAliasRedirect />} />
+
       {/* AppShell = UI Layer: Header, Navigation, Menü, Offline-Banner, Layout */}
-      <Route element={<AppShell />}>
+      <Route element={<InternalAppShell />}>
         {/* Business Layer: Datengetriebene Seiten */}
         <Route path="/" element={<SuspenseWrap><Home /></SuspenseWrap>} />
         <Route path="/annahme" element={<SuspenseWrap><Wizard /></SuspenseWrap>} />
@@ -81,9 +130,6 @@ export default function App() {
         <Route path="/auftraege" element={<SuspenseWrap><Workshop pageTitle="Auftragsverwaltung" /></SuspenseWrap>} />
         <Route path="/kunden" element={<SuspenseWrap><KundenPage /></SuspenseWrap>} />
         <Route path="/teile-bestellen" element={<SuspenseWrap><TeileBestellenPage /></SuspenseWrap>} />
-        <Route path="/track" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
-        <Route path="/track/:code" element={<SuspenseWrap><TrackPage /></SuspenseWrap>} />
-        <Route path="/repair/:code" element={<RepairAliasRedirect />} />
         <Route path="/lager" element={<SuspenseWrap><LagerPage /></SuspenseWrap>} />
         <Route path="/rechnungen" element={<SuspenseWrap><RechnungenPage /></SuspenseWrap>} />
         <Route path="/buchhaltung-erp" element={<SuspenseWrap><ErpOverlayPage /></SuspenseWrap>} />
