@@ -28,6 +28,13 @@ export function FieldTabletPage() {
   const [services, setServices] = useState<Service[]>([]); const [serviceCodes, setServiceCodes] = useState<string[]>([]); const [powerSupply, setPowerSupply] = useState("kein Thema");
   const [preview, setPreview] = useState<Preview | null>(null); const [outcome, setOutcome] = useState<"vor_ort" | "mitnehmen" | "">(""); const [saving, setSaving] = useState(false); const [done, setDone] = useState<string | null>(null);
   const [arrivedAt] = useState(() => new Date().toISOString()); const signature = useRef<SignatureCanvasRef>(null);
+  useEffect(() => {
+    const manifest = document.querySelector('link[rel="manifest"]');
+    const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+    const oldManifest = manifest?.getAttribute("href"); const oldTitle = appleTitle?.getAttribute("content");
+    manifest?.setAttribute("href", "/manifest-field.json"); appleTitle?.setAttribute("content", "Rabbit AD"); document.title = "Rabbit-Technik Außendienst";
+    return () => { if (oldManifest) manifest?.setAttribute("href", oldManifest); if (oldTitle) appleTitle?.setAttribute("content", oldTitle); };
+  }, []);
   useEffect(() => { fetchJson<Problem[]>("/api/problems").then(setProblems).catch(console.error); fetchJson<Service[]>("/api/services").then(setServices).catch(console.error); fetchJson<{id:string;name:string}[]>("/api/field/employees").then(setEmployees).catch(console.error); }, []);
   useEffect(() => { if (!problemKey) return void setPreview(null); fetchJson<Preview>("/api/repairs/preview", { method: "POST", body: JSON.stringify({ problem_key: problemKey, service_codes: serviceCodes }) }).then((p)=>{setPreview(p); if(!serviceCodes.length)setServiceCodes(p.default_service_codes)}).catch(() => setPreview(null)); }, [problemKey, serviceCodes]);
   useEffect(() => { if (customerMode === "existing" && loggedIn) fetchWorkshop<Customer[]>("/api/field/customers").then(setCustomers).catch(() => setCustomers([])); }, [customerMode, loggedIn]);
