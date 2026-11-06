@@ -459,7 +459,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
 
   /** Reparatur-Historie pro Kunde (Werkstatt) – inkl. Link zur gespeicherten Annahme-PDF */
-  app.get("/api/customers/:id/repairs", requireWorkshopFullAuth, (req, res) => {
+  app.get("/api/customers/:id/repairs", requireWorkshopAuth, (req, res) => {
     const cid = paramStr(req.params.id);
     const exists = db.prepare(`SELECT id FROM customers WHERE id = ?`).get(cid);
     if (!exists) {
@@ -779,8 +779,13 @@ export function registerRoutes(app: Express, db: Database.Database) {
         const insRS = db.prepare(
           `INSERT INTO repair_services (repair_id, service_id, price_cents) VALUES (?,?,?)`
         );
+        const serviceNotes = body.service_notes && typeof body.service_notes === "object" ? body.service_notes as Record<string, unknown> : {};
+        const insNote = db.prepare(`INSERT INTO repair_service_notes (id, repair_id, service_id, service_code, note, created_by) VALUES (?,?,?,?,?,?)`);
         for (const s of serviceRows) {
           insRS.run(rid, s.id, s.price_cents);
+          const rawNote = serviceNotes[s.code];
+          const note = typeof rawNote === "string" ? rawNote.trim() : "";
+          if (note) insNote.run(nanoid(), rid, s.id, s.code, note.slice(0, 4000), intakeLocation === "aussendienst" ? "field" : "workshop");
         }
 
         if (signatureDataUrl) {

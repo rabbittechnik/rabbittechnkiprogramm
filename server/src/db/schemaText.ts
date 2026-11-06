@@ -77,6 +77,17 @@ CREATE TABLE IF NOT EXISTS repair_services (
   PRIMARY KEY (repair_id, service_id)
 );
 
+CREATE TABLE IF NOT EXISTS repair_service_notes (
+  id TEXT PRIMARY KEY,
+  repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,
+  service_id TEXT REFERENCES services(id),
+  service_code TEXT NOT NULL,
+  note TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by TEXT NOT NULL DEFAULT 'field'
+);
+CREATE INDEX IF NOT EXISTS idx_repair_service_notes_repair ON repair_service_notes(repair_id);
+
 CREATE TABLE IF NOT EXISTS parts (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
