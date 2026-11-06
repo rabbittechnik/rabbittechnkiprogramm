@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS repairs (
   pre_damage_notes TEXT,
   legal_consent_at TEXT,
   signature_data_url TEXT,
+  intake_location TEXT NOT NULL DEFAULT 'werkstatt' CHECK (intake_location IN ('werkstatt', 'aussendienst')),
   status TEXT NOT NULL DEFAULT 'angenommen',
   total_cents INTEGER NOT NULL DEFAULT 0,
   payment_status TEXT NOT NULL DEFAULT 'offen',
@@ -147,6 +148,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Eingang aus separater Mobile-Annahme; erst nach Werkstatt-Prüfung importieren.
+CREATE TABLE IF NOT EXISTS mobile_intake_submissions (
+  id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'rejected', 'imported')),
+  payload_json TEXT NOT NULL,
+  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  reviewed_at TEXT,
+  reviewed_by TEXT,
+  review_note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_intake_status_submitted
+  ON mobile_intake_submissions(status, submitted_at DESC);
 
 CREATE TABLE IF NOT EXISTS tagesabschluesse (
   id TEXT PRIMARY KEY,

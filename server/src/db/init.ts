@@ -30,7 +30,16 @@ export function openDatabase(): Database.Database {
   migrateRepairOrderPdf(db);
   migrateRepairLogs(db);
   migrateRepairsInReparaturSince(db);
+  migrateRepairsIntakeLocation(db);
   return db;
+}
+
+/** Kennzeichnet Annahmen im Außendienst, damit sie nicht als eingeliefert gelten. */
+function migrateRepairsIntakeLocation(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "intake_location")) {
+    db.exec(`ALTER TABLE repairs ADD COLUMN intake_location TEXT NOT NULL DEFAULT 'werkstatt'`);
+  }
 }
 
 function migrateAppSettingsAndRegister(db: Database.Database): void {

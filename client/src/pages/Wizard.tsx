@@ -20,7 +20,7 @@ type PartSuggestion = { id: string; name: string; sale_cents: number; score: num
 
 type StammCustomer = { id: string; name: string; email: string | null; phone: string | null; address: string | null };
 
-export function Wizard() {
+export function Wizard({ fieldMode = false }: { fieldMode?: boolean }) {
   const [problems, setProblems] = useState<Problem[]>([]);
   const [deviceType, setDeviceType] = useState("Laptop");
   const [brand, setBrand] = useState("");
@@ -54,6 +54,7 @@ export function Wizard() {
     repairOrderNumber?: string | null;
     isTest?: boolean;
     confirmationEmailSkipped?: boolean;
+    queued?: boolean;
   } | null>(null);
 
   const sigRef = useRef<SignatureCanvasRef>(null);
@@ -238,6 +239,7 @@ export function Wizard() {
         signature_data_url,
         service_codes: selectedServiceCodes,
         is_test: isTest || undefined,
+        intake_location: fieldMode ? "aussendienst" : "werkstatt",
       };
       if (selectedCustomerId) {
         body.customer_id = selectedCustomerId;
@@ -252,17 +254,22 @@ export function Wizard() {
         repair: { id: string; repair_order_number?: string | null };
         tracking_code: string;
         confirmationEmailSkipped?: boolean;
+        queued?: boolean;
       }>("/api/repairs", {
         method: "POST",
         body: JSON.stringify(body),
       });
-      setDone({
-        tracking: res.tracking_code,
-        id: res.repair.id,
-        repairOrderNumber: res.repair.repair_order_number ?? null,
-        isTest,
-        confirmationEmailSkipped: res.confirmationEmailSkipped,
-      });
+      if (res.queued) {
+        setDone({ tracking: "", id: "", queued: true, isTest });
+      } else {
+        setDone({
+          tracking: res.tracking_code,
+          id: res.repair.id,
+          repairOrderNumber: res.repair.repair_order_number ?? null,
+          isTest,
+          confirmationEmailSkipped: res.confirmationEmailSkipped,
+        });
+      }
     } catch (e) {
       alert(String(e));
     } finally {
@@ -275,7 +282,7 @@ export function Wizard() {
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="max-w-lg w-full rounded-2xl border-2 border-[#39ff14]/40 bg-[#0a1220]/95 p-8 text-center space-y-6 shadow-[0_0_40px_rgba(57,255,20,0.15)]">
           <h2 className={`font-display text-2xl font-bold ${done.isTest ? "text-red-400 drop-shadow-[0_0_12px_rgba(255,60,60,0.5)]" : "text-[#39ff14] drop-shadow-[0_0_12px_rgba(57,255,20,0.5)]"}`}>
-            {done.isTest ? "TESTAUFTRAG gespeichert" : "Auftrag gespeichert"}
+            {done.isTest ? "TESTAUFTRAG gespeichert" : fieldMode ? "Außendienst-Auftrag gespeichert" : "Auftrag gespeichert"}
           </h2>
           {done.isTest && (
             <p className="text-sm text-red-300 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 font-medium">
@@ -289,13 +296,19 @@ export function Wizard() {
               Eintrag in Stammdaten ergänzen oder bei neuer Annahme E-Mail angeben.
             </p>
           )}
+          {fieldMode && (
+            <p className="text-sm text-sky-200 rounded-lg border border-sky-400/40 bg-sky-400/10 px-3 py-2 font-medium">
+              Als <strong>Außendienst</strong> markiert – die Werkstatt sieht, dass das Gerät noch beim Kunden ist.
+            </p>
+          )}
+          {done.queued && <p className="text-sm text-amber-200 rounded-lg border border-amber-400/45 bg-amber-400/10 px-3 py-3 font-medium">Offline gespeichert. Der Auftrag wird automatisch synchronisiert, sobald wieder Internet verfügbar ist.</p>}
           {done.repairOrderNumber && (
             <p className="text-sm text-zinc-400">
               Auftragsnummer:{" "}
               <span className="font-mono text-white font-semibold">{done.repairOrderNumber}</span>
             </p>
           )}
-          <p className="text-zinc-400">Tracking-Code für den Kunden:</p>
+          {!done.queued && <><p className="text-zinc-400">Tracking-Code für den Kunden:</p>
           <p className="text-3xl font-mono font-bold tracking-wider text-white">{done.tracking}</p>
           <div className="flex justify-center">
             <img
@@ -335,7 +348,7 @@ export function Wizard() {
             >
               Rechnung PDF
             </a>
-          </div>
+          </div></>}
           <button
             type="button"
             className="w-full rounded-xl min-h-[48px] border border-zinc-600 text-zinc-300"
@@ -359,8 +372,9 @@ export function Wizard() {
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-8rem)]">
-      <div className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-4 max-w-[1600px] mx-auto w-full">
-        <div className="xl:col-span-4 min-w-0">
+      {fieldMode && <div className="mb-4 max-w-[1600px] mx-auto w-full rounded-2xl border border-sky-400/45 bg-sky-400/10 px-5 py-4 flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold text-sky-100">Außendienst · Kundenannahme</p><p className="text-sm text-sky-200/80">Das Gerät bleibt beim Kunden. Die Werkstatt wird deutlich informiert.</p></div><span className="rounded-full border border-sky-300/50 px-3 py-1 text-xs font-semibold text-sky-100">iPad-Modus</span></div>}
+      <div className={`flex-1 grid grid-cols-1 ${fieldMode ? "lg:grid-cols-12" : "xl:grid-cols-12"} gap-4 max-w-[1600px] mx-auto w-full`}>
+        <div className={`${fieldMode ? "lg:col-span-4" : "xl:col-span-4"} min-w-0`}>
         {panel(
           "border-[#00d4ff]/45 shadow-[0_0_24px_rgba(0,212,255,0.12)]",
           "Kunden & Gerät",
@@ -518,7 +532,7 @@ export function Wizard() {
         )}
         </div>
 
-        <div className="xl:col-span-4 min-w-0">
+        <div className={`${fieldMode ? "lg:col-span-4" : "xl:col-span-4"} min-w-0`}>
         {panel(
           "border-amber-400/40 shadow-[0_0_24px_rgba(241,196,15,0.1)]",
           "Auftragsdetails",
@@ -571,7 +585,7 @@ export function Wizard() {
         )}
         </div>
 
-        <div className="xl:col-span-4 min-w-0">
+        <div className={`${fieldMode ? "lg:col-span-4" : "xl:col-span-4"} min-w-0`}>
         {panel(
           "border-[#9b59b6]/50 shadow-[0_0_24px_rgba(155,89,182,0.15)]",
           "Kostenübersicht",
@@ -672,7 +686,7 @@ export function Wizard() {
             </label>
           </div>
           <div className="flex flex-col justify-end">
-            <label className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 cursor-pointer select-none">
+            {!fieldMode && <label className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={isTest}
@@ -682,7 +696,7 @@ export function Wizard() {
               <span className="text-sm text-red-300 font-medium">
                 Testmodus – Rechnung wird als TEST markiert (nicht in Buchhaltung / DATEV / Berichten)
               </span>
-            </label>
+            </label>}
             <button
               type="button"
               disabled={submitting}
@@ -694,7 +708,7 @@ export function Wizard() {
               }`}
             >
               <span className="w-8 h-8 rounded-full bg-[#060b13]/20 flex items-center justify-center text-[#060b13]">✓</span>
-              {submitting ? "Speichern…" : isTest ? "TESTAUFTRAG bestätigen" : "Auftrag bestätigen"}
+              {submitting ? "Speichern…" : isTest ? "TESTAUFTRAG bestätigen" : fieldMode ? "AUßENDIENST-AUFTRAG bestätigen" : "Auftrag bestätigen"}
             </button>
           </div>
         </div>

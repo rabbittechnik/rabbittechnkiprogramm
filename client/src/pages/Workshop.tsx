@@ -23,6 +23,7 @@ type Row = {
   tracking_code: string;
   repair_order_number?: string | null;
   status: string;
+  intake_location?: "werkstatt" | "aussendienst";
   total_cents: number;
   payment_status: string;
   payment_method?: string | null;
@@ -601,6 +602,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <div className="flex justify-between gap-2">
                   <span className="font-mono text-[#00d4ff] flex flex-wrap items-center gap-1">
                     {r.is_test ? <span className="text-red-400 font-bold mr-1 text-[10px] uppercase">Test</span> : null}
+                    {r.intake_location === "aussendienst" ? <span className="rounded border border-sky-400/60 bg-sky-400/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-100 uppercase">Außendienst</span> : null}
                     {Number(r.customer_amendment_count ?? 0) > 0 ? (
                       <span
                         className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500/25 border border-amber-400/60 text-amber-200 shrink-0"
@@ -626,6 +628,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <p className="text-sm text-zinc-300 mt-1">
                   {r.customer_name} · {r.device_type} {[r.brand, r.model].filter(Boolean).join(" ")}
                 </p>
+                {r.intake_location === "aussendienst" && <p className="text-xs text-sky-200 mt-1">Gerät noch beim Kunden – nicht als eingeliefert einplanen.</p>}
                 <p className="text-xs text-zinc-500 mt-1">
                   {(r.total_cents / 100).toFixed(2)} € ·{" "}
                   {r.payment_status === "bezahlt" ? (
@@ -665,6 +668,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
               <div className="flex flex-wrap justify-between gap-2 items-start">
                 <h2 className="font-display font-bold text-lg text-[#00d4ff]">
                   {selected.is_test && <span className="rounded bg-red-500/20 border border-red-500/40 px-1.5 py-0.5 text-[10px] font-bold text-red-300 uppercase tracking-wider mr-2">Test</span>}
+                  {selected.intake_location === "aussendienst" && <span className="rounded bg-sky-400/15 border border-sky-400/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-100 uppercase tracking-wider mr-2">Außendienst</span>}
                   {selected.tracking_code}
                   {selected.repair_order_number && (
                     <span className="block text-xs font-mono text-zinc-400 font-normal mt-1">{selected.repair_order_number}</span>
@@ -677,6 +681,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   Kundenansicht
                 </Link>
               </div>
+              {selected.intake_location === "aussendienst" && <div className="rounded-xl border border-sky-400/50 bg-sky-400/10 px-4 py-3 text-sm text-sky-100"><strong>Gerät noch beim Kunden.</strong> Dieser Auftrag wurde im Außendienst angenommen und ist noch nicht in der Werkstatt eingetroffen.</div>}
               <div>
                 <p className="rt-label-neon mb-2">Status</p>
                 <div className="flex flex-wrap gap-2">

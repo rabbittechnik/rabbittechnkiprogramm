@@ -265,6 +265,10 @@ export function Home() {
           <HeroHeader />
         </header>
 
+        <Link to="/aussendienst" className="max-w-[1400px] mx-auto mb-5 min-h-[68px] rounded-2xl border-2 border-sky-400/60 bg-sky-400/10 px-5 flex items-center justify-between gap-4 text-sky-100 shadow-[0_0_24px_rgba(56,189,248,0.18)] active:scale-[0.99]">
+          <span><strong className="block text-lg">Außendienst · iPad-Kundenannahme</strong><span className="text-sm text-sky-200/80">Beim Kunden aufnehmen – die Werkstatt sieht sofort: Gerät noch vor Ort.</span></span><span className="text-2xl" aria-hidden>→</span>
+        </Link>
+
         <div className="max-w-[1400px] mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6 xl:gap-8">
           <div className="xl:col-span-8 space-y-4">
             <h1 className="sr-only">Hauptseite Rabbit-Technik</h1>

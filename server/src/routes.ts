@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Express, Request, Response } from "express";
@@ -85,10 +86,246 @@ function resolveServiceCodesForRequest(body: {
   return [...new Set([...defaultCodes, ...extraCodes])];
 }
 
+type MobileIntakePayload = {
+  customer: { name: string; email: string | null; phone: string | null; address: string | null };
+  device: { device_type: string; brand: string | null; model: string | null; serial_number: string | null };
+  problem_key: string | null;
+  problem_label: string | null;
+  description: string | null;
+  accessories: string | null;
+  pre_damage_notes: string | null;
+  legal_consent: boolean;
+  signature_data_url: string | null;
+  service_codes: string[];
+  source_created_at: string | null;
+};
+
+function optionalMobileText(value: unknown, maxLength: number): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") throw new Error("Ungültiges Textfeld");
+  const text = value.trim();
+  if (text.length > maxLength) throw new Error(`Textfeld ist länger als ${maxLength} Zeichen`);
+  return text || null;
+}
+
+/** Speichert nur den dokumentierten Mobile-Vertrag, keine unbekannten Objekte. */
+function parseMobileIntakePayload(body: unknown): MobileIntakePayload {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("JSON-Objekt erwartet");
+  const input = body as Record<string, unknown>;
+  const customer = input.customer;
+  const device = input.device;
+  if (!customer || typeof customer !== "object" || Array.isArray(customer)) throw new Error("customer fehlt");
+  if (!device || typeof device !== "object" || Array.isArray(device)) throw new Error("device fehlt");
+  const c = customer as Record<string, unknown>;
+  const d = device as Record<string, unknown>;
+  const name = optionalMobileText(c.name, 160);
+  const deviceType = optionalMobileText(d.device_type, 80);
+  if (!name) throw new Error("customer.name fehlt");
+  if (!deviceType) throw new Error("device.device_type fehlt");
+  const serviceCodes = input.service_codes === undefined ? [] : input.service_codes;
+  if (!Array.isArray(serviceCodes) || serviceCodes.some((code) => typeof code !== "string" || code.length > 80)) {
+    throw new Error("service_codes ist ungültig");
+  }
+  const signature = optionalMobileText(input.signature_data_url, 500_000);
+  if (signature && !signature.startsWith("data:image/")) throw new Error("signature_data_url ist ungültig");
+  return {
+    customer: { name, email: optionalMobileText(c.email, 254), phone: optionalMobileText(c.phone, 80), address: optionalMobileText(c.address, 500) },
+    device: { device_type: deviceType, brand: optionalMobileText(d.brand, 100), model: optionalMobileText(d.model, 160), serial_number: optionalMobileText(d.serial_number, 160) },
+    problem_key: optionalMobileText(input.problem_key, 80),
+    problem_label: optionalMobileText(input.problem_label, 160),
+    description: optionalMobileText(input.description, 4_000),
+    accessories: optionalMobileText(input.accessories, 1_000),
+    pre_damage_notes: optionalMobileText(input.pre_damage_notes, 2_000),
+    legal_consent: input.legal_consent === true,
+    signature_data_url: signature,
+    service_codes: [...new Set(serviceCodes.map((code) => code.trim()).filter(Boolean))],
+    source_created_at: optionalMobileText(input.source_created_at, 40),
+  };
+}
+
+function hasValidMobileSyncKey(req: Request): boolean {
+  const configured = process.env.RABBIT_MOBILE_SYNC_KEY;
+  const supplied = req.header("x-rabbit-mobile-key");
+  if (!configured || !supplied) return false;
+  const expected = Buffer.from(configured, "utf8");
+  const actual = Buffer.from(supplied, "utf8");
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
 export function registerRoutes(app: Express, db: Database.Database) {
   ensureUploadDir();
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  /** Mobile-Eingang: keine produktiven Kunden oder Aufträge ohne Werkstatt-Prüfung erzeugen. */
+  app.post("/api/mobile-intake/submissions", (req, res) => {
+    if (!process.env.RABBIT_MOBILE_SYNC_KEY) {
+      res.status(503).json({ error: "Mobile-Synchronisation ist nicht eingerichtet" });
+      return;
+    }
+    if (!hasValidMobileSyncKey(req)) {
+      res.status(401).json({ error: "Mobile-Anmeldung erforderlich" });
+      return;
+    }
+    const idempotencyKey = req.header("idempotency-key")?.trim() ?? "";
+    if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) {
+      res.status(400).json({ error: "Idempotency-Key fehlt oder ist ungültig" });
+      return;
+    }
+    try {
+      const payload = parseMobileIntakePayload(req.body);
+      const existing = db.prepare(`SELECT id, status FROM mobile_intake_submissions WHERE idempotency_key = ?`)
+        .get(idempotencyKey) as { id: string; status: string } | undefined;
+      if (existing) {
+        res.status(200).json({ id: existing.id, status: existing.status, duplicate: true });
+        return;
+      }
+      const id = nanoid();
+      db.prepare(`INSERT INTO mobile_intake_submissions (id, idempotency_key, payload_json) VALUES (?,?,?)`)
+        .run(id, idempotencyKey, JSON.stringify(payload));
+      res.status(202).json({ id, status: "pending", duplicate: false });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : "Ungültige Mobile-Daten" });
+    }
+  });
+
+  /** Werkstatt-Vollzugriff: Eingänge zur späteren, expliziten Übernahme prüfen. */
+  app.get("/api/mobile-intake/submissions", requireWorkshopFullAuth, (req, res) => {
+    const status = String(req.query.status ?? "pending");
+    const rows = db.prepare(
+      `SELECT id, status, payload_json, submitted_at, reviewed_at, reviewed_by, review_note
+       FROM mobile_intake_submissions
+       WHERE (? = 'all' OR status = ?)
+       ORDER BY datetime(submitted_at) ASC LIMIT 200`
+    ).all(status, status) as Array<Record<string, unknown> & { payload_json: string }>;
+    res.json(rows.map(({ payload_json, ...row }) => ({ ...row, payload: JSON.parse(payload_json) })));
+  });
+
+  /**
+   * Übernahme ist absichtlich eine explizite Werkstatt-Aktion. Es gibt keinen
+   * automatischen Namensabgleich: die aufrufende Oberfläche muss die Wahl
+   * "bestehender Kunde" oder "neuen Kunden anlegen" sichtbar bestätigen.
+   */
+  app.post("/api/mobile-intake/submissions/:id/import", requireWorkshopFullAuth, async (req, res) => {
+    const submissionId = paramStr(req.params.id);
+    if (req.body?.confirm !== true) {
+      res.status(400).json({ error: "Übernahme muss ausdrücklich bestätigt werden" });
+      return;
+    }
+    const existingCustomerId = typeof req.body?.customer_id === "string" ? req.body.customer_id.trim() : "";
+    const createCustomer = req.body?.create_customer === true;
+    if (!existingCustomerId && !createCustomer) {
+      res.status(400).json({ error: "Bitte bestehenden Kunden wählen oder Neuanlage ausdrücklich bestätigen" });
+      return;
+    }
+    if (existingCustomerId && createCustomer) {
+      res.status(400).json({ error: "Kundenauswahl ist widersprüchlich" });
+      return;
+    }
+
+    const submission = db.prepare(
+      `SELECT id, status, payload_json FROM mobile_intake_submissions WHERE id = ?`
+    ).get(submissionId) as { id: string; status: string; payload_json: string } | undefined;
+    if (!submission) {
+      res.status(404).json({ error: "Mobile-Eingang nicht gefunden" });
+      return;
+    }
+    if (submission.status === "imported") {
+      res.status(409).json({ error: "Dieser Mobile-Eingang wurde bereits übernommen" });
+      return;
+    }
+    if (submission.status === "rejected") {
+      res.status(409).json({ error: "Abgelehnte Eingänge können nicht übernommen werden" });
+      return;
+    }
+
+    try {
+      const payload = parseMobileIntakePayload(JSON.parse(submission.payload_json));
+      if (existingCustomerId) {
+        const customer = db.prepare(`SELECT id FROM customers WHERE id = ?`).get(existingCustomerId);
+        if (!customer) {
+          res.status(400).json({ error: "Ausgewählter Kunde wurde nicht gefunden" });
+          return;
+        }
+      }
+      const serviceRows = getServiceRowsByCodes(db, payload.service_codes);
+      const repairId = nanoid();
+      const deviceId = nanoid();
+      const trackingCode = makeTrackingCode();
+      const orderYear = berlinCalendarYear();
+
+      const tx = db.transaction(() => {
+        const customerId = existingCustomerId || nanoid();
+        if (!existingCustomerId) {
+          db.prepare(`INSERT INTO customers (id, name, email, phone, address) VALUES (?,?,?,?,?)`).run(
+            customerId, payload.customer.name, payload.customer.email, payload.customer.phone, payload.customer.address
+          );
+        }
+        db.prepare(
+          `INSERT INTO devices (id, customer_id, device_type, brand, model, serial_number, device_image_url)
+           VALUES (?,?,?,?,?,?,?)`
+        ).run(
+          deviceId, customerId, payload.device.device_type, payload.device.brand, payload.device.model,
+          payload.device.serial_number, null
+        );
+        const problemLabel = PROBLEMS.find((problem) => problem.key === payload.problem_key)?.label
+          ?? payload.problem_label ?? payload.problem_key;
+        const repairOrderNumber = allocateRepairOrderNumber(db, orderYear);
+        db.prepare(
+          `INSERT INTO repairs (id, tracking_code, repair_order_number, customer_id, device_id, problem_key, problem_label,
+             description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, intake_location, status, total_cents,
+             payment_status, is_test)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).run(
+          repairId, trackingCode, repairOrderNumber, customerId, deviceId, payload.problem_key, problemLabel,
+          payload.description, payload.accessories, payload.pre_damage_notes,
+          payload.legal_consent ? new Date().toISOString() : null, payload.signature_data_url,
+          "aussendienst", "angenommen", 0, "offen", 0
+        );
+        const insertService = db.prepare(`INSERT INTO repair_services (repair_id, service_id, price_cents) VALUES (?,?,?)`);
+        for (const service of serviceRows) insertService.run(repairId, service.id, service.price_cents);
+        if (payload.signature_data_url) {
+          db.prepare(`INSERT INTO signatures (id, repair_id, image_data_url) VALUES (?,?,?)`).run(
+            nanoid(), repairId, payload.signature_data_url
+          );
+        }
+        recalculateRepairTotal(db, repairId);
+        const total = (db.prepare(`SELECT total_cents FROM repairs WHERE id = ?`).get(repairId) as { total_cents: number }).total_cents;
+        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${repairId.slice(0, 6).toUpperCase()}`;
+        db.prepare(
+          `INSERT INTO invoices (id, repair_id, invoice_number, total_cents, payment_status, document_status, document_kind)
+           VALUES (?,?,?,?,?,?,?)`
+        ).run(nanoid(), repairId, invoiceNumber, total, "offen", "entwurf", "rechnung");
+        const imported = db.prepare(
+          `UPDATE mobile_intake_submissions
+           SET status = 'imported', reviewed_at = datetime('now'), reviewed_by = 'workshop', review_note = ?
+           WHERE id = ? AND status IN ('pending', 'reviewed')`
+        ).run(`Übernommen als Reparatur ${trackingCode}`, submissionId);
+        if (imported.changes !== 1) throw new Error("Mobile-Eingang wurde parallel verändert");
+      });
+      tx();
+
+      const warnings: string[] = [];
+      try {
+        const acceptancePdfPath = await writeAcceptancePdf(db, repairId);
+        db.prepare(`UPDATE repairs SET acceptance_pdf_path = ? WHERE id = ?`).run(acceptancePdfPath, repairId);
+      } catch (error) {
+        console.error("[mobile-import] Annahme-PDF fehlgeschlagen:", error);
+        warnings.push("Annahme-PDF konnte nicht erzeugt werden");
+      }
+      try {
+        await syncRepairOrderPdfs(db, repairId);
+      } catch (error) {
+        console.error("[mobile-import] Reparaturauftrag-PDF fehlgeschlagen:", error);
+        warnings.push("Reparaturauftrag-PDF konnte nicht erzeugt werden");
+      }
+      const repair = db.prepare(`SELECT * FROM repairs WHERE id = ?`).get(repairId);
+      res.status(201).json({ repair, tracking_code: trackingCode, imported_submission_id: submissionId, warnings });
+    } catch (error) {
+      console.error("[mobile-import]", error);
+      res.status(400).json({ error: error instanceof Error ? error.message : "Mobile-Eingang konnte nicht übernommen werden" });
+    }
+  });
 
   /**
    * SumUp: Online-Checkout (CHECKOUT_STATUS_CHANGED → GET /checkouts/{id}).
@@ -259,7 +496,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     if (isBenchRequest(req)) {
       const rows = db
         .prepare(
-          `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.updated_at, r.created_at, r.is_test,
+          `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.intake_location, r.updated_at, r.created_at, r.is_test,
            c.name AS customer_name, d.device_type, d.brand, d.model,
            (SELECT COUNT(1) FROM repair_logs l WHERE l.repair_id = r.id AND l.created_by = 'annahme') AS customer_amendment_count
            FROM repairs r
@@ -274,7 +511,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     const rows = db
       .prepare(
-        `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
+        `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.intake_location, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
          r.is_test,
          c.name as customer_name, d.device_type, d.brand, d.model,
          (SELECT COUNT(1) FROM repair_logs l WHERE l.repair_id = r.id AND l.created_by = 'annahme') AS customer_amendment_count
@@ -420,6 +657,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       const serviceRows = getServiceRowsByCodes(db, serviceCodes);
 
       const isTest = body.is_test === true ? 1 : 0;
+      const intakeLocation = body.intake_location === "aussendienst" ? "aussendienst" : "werkstatt";
 
       const did = nanoid();
       const rid = nanoid();
@@ -461,8 +699,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
         );
 
         db.prepare(
-          `INSERT INTO repairs (id, tracking_code, repair_order_number, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, status, total_cents, payment_status, is_test)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO repairs (id, tracking_code, repair_order_number, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, intake_location, status, total_cents, payment_status, is_test)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           rid,
           tracking,
@@ -476,6 +714,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
           body.pre_damage_notes ? String(body.pre_damage_notes) : null,
           legal,
           signatureDataUrl,
+          intakeLocation,
           "angenommen",
           0,
           "offen",
