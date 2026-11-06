@@ -703,6 +703,20 @@ export function registerRoutes(app: Express, db: Database.Database) {
         PROBLEMS.find((p) => p.key === problemKey)?.label ?? body.problem_label ?? problemKey;
       const serviceCodes = resolveServiceCodesForRequest(body);
       const serviceRows = getServiceRowsByCodes(db, serviceCodes);
+      const requestedPrices = body.service_prices && typeof body.service_prices === "object"
+        ? body.service_prices as Record<string, unknown>
+        : {};
+      const agreedPrices = new Map<string, number>();
+      for (const service of serviceRows) {
+        const candidate = requestedPrices[service.code];
+        if (candidate === undefined) continue;
+        const cents = Number(candidate);
+        if (!Number.isInteger(cents) || cents < 0 || cents > 1_000_000) {
+          res.status(400).json({ error: `Ungültiger vereinbarter Preis für ${service.name}` });
+          return;
+        }
+        agreedPrices.set(service.code, cents);
+      }
 
       const isTest = body.is_test === true ? 1 : 0;
       const intakeLocation = body.intake_location === "aussendienst" ? "aussendienst" : "werkstatt";
@@ -784,7 +798,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
         const serviceNotes = body.service_notes && typeof body.service_notes === "object" ? body.service_notes as Record<string, unknown> : {};
         const insNote = db.prepare(`INSERT INTO repair_service_notes (id, repair_id, service_id, service_code, note, created_by) VALUES (?,?,?,?,?,?)`);
         for (const s of serviceRows) {
-          insRS.run(rid, s.id, s.price_cents);
+          insRS.run(rid, s.id, agreedPrices.get(s.code) ?? s.price_cents);
           const rawNote = serviceNotes[s.code];
           const note = typeof rawNote === "string" ? rawNote.trim() : "";
           if (note) insNote.run(nanoid(), rid, s.id, s.code, note.slice(0, 4000), intakeLocation === "aussendienst" ? "field" : "workshop");
@@ -1158,12 +1172,15 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const amount = Number(req.body?.amount_cents);
     const method = String(req.body?.method ?? "").trim();
     const repair = db.prepare(`SELECT total_cents FROM repairs WHERE id = ?`).get(repairId) as { total_cents: number } | undefined;
-    if (!repair || !Number.isInteger(amount) || amount <= 0 || !method) { res.status(400).json({ error: "Ungültige Teilzahlung" }); return; }
+    if (!repair || !Number.isInteger(amount) || amount <= 0 || !["bar", "sumup", "ueberweisung"].includes(method)) { res.status(400).json({ error: "Ungültige Teilzahlung" }); return; }
     const paid = (db.prepare(`SELECT COALESCE(SUM(amount_cents),0) AS cents FROM repair_payments WHERE repair_id = ?`).get(repairId) as { cents: number }).cents;
     if (amount > repair.total_cents - paid) { res.status(400).json({ error: "Teilzahlung ist höher als der offene Betrag" }); return; }
     db.prepare(`INSERT INTO repair_payments (id, repair_id, amount_cents, method, note, created_by) VALUES (?,?,?,?,?,?)`).run(nanoid(), repairId, amount, method, req.body?.note ? String(req.body.note) : null, req.workshopRole === "field" ? "field" : "workshop");
     const newPaid = paid + amount;
-    if (newPaid === repair.total_cents) db.prepare(`UPDATE repairs SET payment_status = 'bezahlt', payment_paid_at = datetime('now') WHERE id = ?`).run(repairId);
+    if (newPaid === repair.total_cents) {
+      db.prepare(`UPDATE repairs SET payment_status = 'bezahlt', payment_method = ?, payment_paid_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(method, repairId);
+      setPrimaryInvoicePaymentStatus(db, repairId, "bezahlt");
+    }
     res.status(201).json({ paid_cents: newPaid, open_cents: repair.total_cents - newPaid });
   });
 
@@ -1373,18 +1390,18 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     const row = db
       .prepare(
-        `SELECT r.id, r.status, r.total_cents, r.tracking_code, r.payment_status, c.name AS customer_name
+        `SELECT r.id, r.status, r.field_outcome, r.total_cents, r.tracking_code, r.payment_status, c.name AS customer_name
          FROM repairs r JOIN customers c ON c.id = r.customer_id WHERE r.id = ?`
       )
       .get(repairId) as
-      | { id: string; status: string; total_cents: number; tracking_code: string; payment_status: string; customer_name: string }
+      | { id: string; status: string; field_outcome: string | null; total_cents: number; tracking_code: string; payment_status: string; customer_name: string }
       | undefined;
     if (!row) {
       res.status(404).json({ error: "Auftrag nicht gefunden" });
       return;
     }
-    if (row.status !== "fertig") {
-      res.status(400).json({ error: "Checkout nur bei Status „fertig zur Abholung“." });
+    if (row.status !== "fertig" && row.field_outcome !== "vor_ort") {
+      res.status(400).json({ error: "Checkout nur nach einem abgeschlossenen Vor-Ort-Einsatz oder bei Abholung." });
       return;
     }
     if (row.payment_status === "bezahlt") {
@@ -1447,6 +1464,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
   app.post("/api/create-sumup-checkout", requireWorkshopFullAuth, postCreateSumupCheckout);
   app.post("/create-sumup-checkout", requireWorkshopFullAuth, postCreateSumupCheckout);
+  /** Außendienst: Karte nur über den echten SumUp-Checkout, niemals als bloßer Klick als bezahlt markieren. */
+  app.post("/api/field/card-checkout", requireWorkshopAuth, postCreateSumupCheckout);
 
   /** Tablet: SumUp-Status per API nachziehen (Webhook-Fallback / sofortige Aktualisierung). */
   app.get("/api/repairs/:id/sumup-sync", requireWorkshopFullAuth, async (req, res) => {

@@ -12,4 +12,10 @@
 .field-tablet .bg-\[\#39ff14\]\/10 { background:#eaf7ef!important; }
 .field-tablet .text-\[\#39ff14\],.field-tablet .text-\[\#b8ff9a\] { color:#147a43!important; }
 .field-tablet .border-\[\#39ff14\] { border-color:#33a266!important; }
+.field-tablet .field-login,.field-tablet .payment-card { background:#fff; border:1px solid #dce3ed; box-shadow:0 16px 42px rgba(32,55,85,.12); }
+.field-tablet .payment-option { min-height:150px; display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:20px; border:1px solid #cfd8e6; border-radius:14px; background:#fff; color:#172033; text-align:left; }
+.field-tablet .payment-option:hover { border-color:#1769e0; background:#f4f8ff; }
+.field-tablet .payment-option span { font-size:28px; color:#1769e0; }
+.field-tablet .payment-option strong { font-size:18px; }
+.field-tablet .payment-option small { color:#64748b; }
 @media (min-width:900px){ .field-tablet > div { max-width:1180px; } }
