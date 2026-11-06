@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson, fetchWorkshop } from "../api";
 import { SignatureCanvas, type SignatureCanvasRef } from "../components/SignatureCanvas";
+import { setWorkshopToken } from "../workshopAuth";
 
 type Customer = { id: string; name: string; email: string | null; phone: string | null; address: string | null };
 type Problem = { key: string; label: string };
@@ -14,6 +15,7 @@ const CHECKS: Record<string, string> = {
 };
 
 export function FieldTabletPage() {
+  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]); const [employeeId, setEmployeeId] = useState(""); const [password, setPassword] = useState(""); const [loggedIn, setLoggedIn] = useState(false); const [loginError, setLoginError] = useState("");
   const [step, setStep] = useState(0);
   const [place, setPlace] = useState<"kunde" | "firma" | "werkstatt" | "">("");
   const [customerMode, setCustomerMode] = useState<"existing" | "new" | "">("");
@@ -24,13 +26,15 @@ export function FieldTabletPage() {
   const [problems, setProblems] = useState<Problem[]>([]); const [problemKey, setProblemKey] = useState(""); const [description, setDescription] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null); const [outcome, setOutcome] = useState<"vor_ort" | "mitnehmen" | "">(""); const [saving, setSaving] = useState(false); const [done, setDone] = useState<string | null>(null);
   const [arrivedAt] = useState(() => new Date().toISOString()); const signature = useRef<SignatureCanvasRef>(null);
-  useEffect(() => { fetchJson<Problem[]>("/api/problems").then(setProblems).catch(console.error); }, []);
+  useEffect(() => { fetchJson<Problem[]>("/api/problems").then(setProblems).catch(console.error); fetchJson<{id:string;name:string}[]>("/api/field/employees").then(setEmployees).catch(console.error); }, []);
   useEffect(() => { if (!problemKey) return void setPreview(null); fetchJson<Preview>("/api/repairs/preview", { method: "POST", body: JSON.stringify({ problem_key: problemKey }) }).then(setPreview).catch(() => setPreview(null)); }, [problemKey]);
-  useEffect(() => { if (customerMode === "existing") fetchWorkshop<Customer[]>("/api/customers").then(setCustomers).catch(() => setCustomers([])); }, [customerMode]);
+  useEffect(() => { if (customerMode === "existing" && loggedIn) fetchWorkshop<Customer[]>("/api/field/customers").then(setCustomers).catch(() => setCustomers([])); }, [customerMode, loggedIn]);
   const selected = customers.find((c) => c.id === customerId);
   const title = ["Wo bist du heute?", "Kunde auswählen", "Gerät & Fehler", "Vorschlag bestätigen"][step];
   const canNext = step === 0 ? !!place : step === 1 ? (customerMode === "existing" ? !!customerId : !!name.trim()) : step === 2 ? !!deviceType : !!outcome;
   const next = () => { if (canNext) setStep((s) => Math.min(3, s + 1)); };
+  const login = async () => { try { const r=await fetchJson<{token:string}>("/api/field/login",{method:"POST",body:JSON.stringify({employee_id:employeeId,password})}); setWorkshopToken(r.token); setLoggedIn(true); } catch { setLoginError("Name oder Passwort stimmt nicht."); } };
+  if (!loggedIn) return <main className="min-h-screen bg-[#060b13] p-5 flex items-center justify-center text-white"><div className="max-w-md w-full rounded-3xl border border-sky-400/40 bg-[#0a1220] p-7 space-y-5"><p className="text-sky-300 font-bold uppercase tracking-wider">Rabbit-Technik · Außendienst</p><h1 className="text-3xl font-bold">Mitarbeiter anmelden</h1><select className="rt-input-neon w-full min-h-[56px]" value={employeeId} onChange={e=>setEmployeeId(e.target.value)}><option value="">Deinen Namen auswählen…</option>{employees.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select><input type="password" className="rt-input-neon w-full min-h-[56px]" placeholder="Persönliches Passwort" value={password} onChange={e=>setPassword(e.target.value)}/>{loginError&&<p className="text-red-300">{loginError}</p>}<button disabled={!employeeId||!password} onClick={()=>void login()} className="rt-btn-confirm w-full min-h-[60px]">Anmelden</button></div></main>;
   const submit = async () => { if (!outcome) return; setSaving(true); try { const r = await fetchWorkshop<{ tracking_code: string }>("/api/repairs", { method: "POST", body: JSON.stringify({ customer_id: customerMode === "existing" ? customerId : undefined, customer: customerMode === "new" ? { name, email: email || null, phone: phone || null, address: address || null } : undefined, device: { device_type: deviceType, brand: brand || null, model: model || null, serial_number: serial || null }, problem_key: problemKey, description: description || null, legal_consent: true, signature_data_url: signature.current?.toDataURL() ?? null, service_codes: preview?.services.map((s) => s.code) ?? [], intake_location: "aussendienst", field_arrived_at: arrivedAt, field_outcome: outcome }) }); setDone(r.tracking_code); } catch (e) { alert(String(e)); } finally { setSaving(false); } };
   if (done) return <main className="min-h-screen bg-[#060b13] p-6 flex items-center justify-center"><div className="max-w-xl w-full rounded-3xl border border-[#39ff14]/50 bg-[#0a1220] p-8 text-center space-y-4"><h1 className="text-2xl font-bold text-[#39ff14]">Auftrag gespeichert</h1><p className="text-zinc-300">Tracking-Code: <strong className="font-mono">{done}</strong></p><p className="text-sky-200">{outcome === "mitnehmen" ? "Die Werkstatt wurde informiert: Geräte-Eingang erwartet. Die Rechnung entsteht erst nach der Reparatur." : "Vor-Ort-Einsatz dokumentiert."}</p><button className="rt-btn-confirm w-full min-h-[56px]" onClick={() => location.reload()}>Neuen Außendienstauftrag starten</button></div></main>;
   return <main className="min-h-screen bg-[#060b13] text-white p-4 sm:p-8"><div className="max-w-4xl mx-auto"><header className="mb-6 flex items-center justify-between"><div><p className="text-sky-300 text-sm font-bold uppercase tracking-wider">Rabbit-Technik · Außendienst</p><h1 className="text-3xl font-bold">{title}</h1></div><span className="rounded-full border border-sky-400/40 px-3 py-1 text-sm">Schritt {step + 1}/4</span></header><div className="h-2 rounded bg-white/10 mb-8"><div className="h-full rounded bg-[#00d4ff]" style={{ width: `${(step + 1) * 25}%` }} /></div><section className="rounded-3xl border border-sky-400/30 bg-[#0a1220] p-5 sm:p-8 min-h-[430px]">

@@ -1,4 +1,6 @@
 import Database from "better-sqlite3";
+import crypto from "node:crypto";
+import { nanoid } from "nanoid";
 import { SCHEMA_SQL } from "./schemaText.js";
 import { getDbFilePath } from "../lib/dataPaths.js";
 import { recalculateAllRegisterBalances } from "../lib/registerBalance.js";
@@ -32,7 +34,15 @@ export function openDatabase(): Database.Database {
   migrateRepairsInReparaturSince(db);
   migrateRepairsIntakeLocation(db);
   migrateFieldVisitColumns(db);
+  seedInitialFieldEmployee(db);
   return db;
+}
+
+function seedInitialFieldEmployee(db: Database.Database): void {
+  const name = process.env.RABBIT_INITIAL_ADMIN_NAME?.trim(); const password = process.env.RABBIT_INITIAL_ADMIN_PASSWORD;
+  if (!name || !password || db.prepare(`SELECT 1 FROM employees LIMIT 1`).get()) return;
+  const salt=crypto.randomBytes(16).toString("hex"); const hash=crypto.scryptSync(password,salt,64).toString("hex");
+  db.prepare(`INSERT INTO employees (id,name,password_hash,role) VALUES (?,?,?,'field')`).run(nanoid(),name,`${salt}:${hash}`);
 }
 
 function migrateFieldVisitColumns(db: Database.Database): void {

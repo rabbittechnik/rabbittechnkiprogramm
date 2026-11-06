@@ -5,7 +5,7 @@ declare global {
   namespace Express {
     interface Request {
       /** Gesetzt wenn Werkstatt-Passwort aktiv und Bearer gültig: `workshop` oder `bench`. */
-      workshopRole?: "workshop" | "bench";
+      workshopRole?: "workshop" | "bench" | "field";
     }
   }
 }
@@ -45,7 +45,7 @@ export function verifyBenchPassword(password: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-export type WorkshopTokenRole = "workshop" | "bench";
+export type WorkshopTokenRole = "workshop" | "bench" | "field";
 
 export function signWorkshopToken(role: WorkshopTokenRole = "workshop"): string {
   const payload = { role, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 };
@@ -77,7 +77,7 @@ export function parseWorkshopToken(token: string): { role: WorkshopTokenRole; ex
       role?: string;
     };
     if (typeof payload.exp !== "number" || payload.exp < Date.now()) return null;
-    const role: WorkshopTokenRole = payload.role === "bench" ? "bench" : "workshop";
+    const role: WorkshopTokenRole = payload.role === "bench" ? "bench" : payload.role === "field" ? "field" : "workshop";
     return { role, exp: payload.exp };
   } catch {
     return null;

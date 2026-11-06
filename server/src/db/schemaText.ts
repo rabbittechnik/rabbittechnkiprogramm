@@ -153,6 +153,29 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS employees (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'field' CHECK (role IN ('admin', 'field')),
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS business_calendar_events (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT REFERENCES customers(id),
+  repair_id TEXT REFERENCES repairs(id),
+  title TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'kundentermin',
+  reminder_minutes INTEGER NOT NULL DEFAULT 60,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_business_calendar_window ON business_calendar_events(starts_at, ends_at);
+
 -- Eingang aus separater Mobile-Annahme; erst nach Werkstatt-Prüfung importieren.
 CREATE TABLE IF NOT EXISTS mobile_intake_submissions (
   id TEXT PRIMARY KEY,

@@ -152,10 +152,56 @@ function hasValidMobileSyncKey(req: Request): boolean {
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
+function passwordHash(password: string, salt = crypto.randomBytes(16).toString("hex")): string {
+  const digest = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${digest}`;
+}
+function passwordMatches(password: string, stored: string): boolean {
+  const [salt, digest] = stored.split(":");
+  if (!salt || !digest) return false;
+  const actual = crypto.scryptSync(password, salt, 64).toString("hex");
+  return actual.length === digest.length && crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(digest));
+}
+
 export function registerRoutes(app: Express, db: Database.Database) {
   ensureUploadDir();
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  /** Öffentliche Namensliste für das Außendienst-Tablet; niemals Passwortdaten. */
+  app.get("/api/field/employees", (_req, res) => {
+    res.json(db.prepare(`SELECT id, name FROM employees WHERE active = 1 AND role = 'field' ORDER BY name COLLATE NOCASE`).all());
+  });
+  /** Persönliche Tablet-Anmeldung. Das Ergebnis wird erst im nächsten UI-Schritt als eingeschränkter Token verwendet. */
+  app.post("/api/field/login", (req, res) => {
+    const id = String(req.body?.employee_id ?? ""); const password = String(req.body?.password ?? "");
+    const employee = db.prepare(`SELECT id, name, password_hash FROM employees WHERE id = ? AND active = 1 AND role = 'field'`).get(id) as { id: string; name: string; password_hash: string } | undefined;
+    if (!employee || !passwordMatches(password, employee.password_hash)) { res.status(401).json({ error: "Anmeldung fehlgeschlagen" }); return; }
+    res.json({ token: signWorkshopToken("field"), employee: { id: employee.id, name: employee.name } });
+  });
+  app.get("/api/admin/employees", requireWorkshopFullAuth, (_req, res) => {
+    res.json(db.prepare(`SELECT id, name, role, active, created_at FROM employees ORDER BY name COLLATE NOCASE`).all());
+  });
+  app.get("/api/field/customers", requireWorkshopAuth, (_req, res) => {
+    res.json(db.prepare(`SELECT id, name, email, phone, address FROM customers ORDER BY name COLLATE NOCASE LIMIT 500`).all());
+  });
+  app.post("/api/admin/employees", requireWorkshopFullAuth, (req, res) => {
+    const name = String(req.body?.name ?? "").trim(); const password = String(req.body?.password ?? ""); const role = req.body?.role === "admin" ? "admin" : "field";
+    if (!name || password.length < 10) { res.status(400).json({ error: "Name und ein Passwort mit mindestens 10 Zeichen sind erforderlich" }); return; }
+    try { const id = nanoid(); db.prepare(`INSERT INTO employees (id, name, password_hash, role) VALUES (?,?,?,?)`).run(id, name, passwordHash(password), role); res.status(201).json({ id, name, role }); }
+    catch { res.status(409).json({ error: "Mitarbeitername existiert bereits" }); }
+  });
+  app.get("/api/calendar/business", requireWorkshopFullAuth, (req, res) => {
+    const from = String(req.query.from ?? ""); const to = String(req.query.to ?? "");
+    res.json(db.prepare(`SELECT e.*, c.name AS customer_name, r.tracking_code FROM business_calendar_events e LEFT JOIN customers c ON c.id=e.customer_id LEFT JOIN repairs r ON r.id=e.repair_id WHERE e.ends_at >= ? AND e.starts_at <= ? ORDER BY e.starts_at`).all(from, to));
+  });
+  app.post("/api/calendar/business", requireWorkshopFullAuth, (req, res) => {
+    const title=String(req.body?.title??"").trim(), starts=String(req.body?.starts_at??""), ends=String(req.body?.ends_at??"");
+    if(!title || !starts || !ends || Date.parse(ends)<=Date.parse(starts)){res.status(400).json({error:"Titel sowie gültige Start- und Endzeit erforderlich"});return;}
+    const conflicts=db.prepare(`SELECT id,title,starts_at,ends_at FROM business_calendar_events WHERE starts_at < ? AND ends_at > ?`).all(ends,starts);
+    const id=nanoid(); db.prepare(`INSERT INTO business_calendar_events (id,customer_id,repair_id,title,starts_at,ends_at,kind,reminder_minutes,notes) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,req.body?.customer_id||null,req.body?.repair_id||null,title,starts,ends,String(req.body?.kind??"kundentermin"),Number(req.body?.reminder_minutes??60),req.body?.notes?String(req.body.notes):null);
+    res.status(201).json({id,conflicts});
+  });
 
   /** Mobile-Eingang: keine produktiven Kunden oder Aufträge ohne Werkstatt-Prüfung erzeugen. */
   app.post("/api/mobile-intake/submissions", (req, res) => {
@@ -625,7 +671,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
   });
 
-  app.post("/api/repairs", requireWorkshopFullAuth, async (req, res) => {
+  app.post("/api/repairs", requireWorkshopAuth, async (req, res) => {
     try {
       const body = req.body ?? {};
       const existingCustomerId = body.customer_id ? String(body.customer_id).trim() : "";

@@ -125,7 +125,6 @@ export default function App() {
         {/* Business Layer: Datengetriebene Seiten */}
         <Route path="/" element={<SuspenseWrap><Home /></SuspenseWrap>} />
         <Route path="/annahme" element={<SuspenseWrap><Wizard /></SuspenseWrap>} />
-        <Route path="/aussendienst" element={<SuspenseWrap><FieldTabletPage /></SuspenseWrap>} />
         <Route path="/annahme/nachtrag" element={<SuspenseWrap><RepairAmendmentPage /></SuspenseWrap>} />
         <Route path="/werkstatt" element={<SuspenseWrap><Workshop /></SuspenseWrap>} />
         <Route path="/werkstatt-montage" element={<SuspenseWrap><WorkshopBench /></SuspenseWrap>} />
@@ -154,6 +153,7 @@ export default function App() {
           }
         />
       </Route>
+      <Route path="/aussendienst" element={<SuspenseWrap><FieldTabletPage /></SuspenseWrap>} />
     </Routes>
   );
 }
