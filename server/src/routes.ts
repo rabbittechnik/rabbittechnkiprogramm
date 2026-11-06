@@ -208,7 +208,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
   app.get("/api/field/today", requireWorkshopAuth, (req, res) => {
     const employeeId = req.workshopEmployeeId;
     if (req.workshopRole !== "field" || !employeeId) { res.status(403).json({ error: "Außendienst-Anmeldung erforderlich" }); return; }
-    const events = db.prepare(`SELECT e.*, c.name AS customer_name, c.address AS customer_address, r.tracking_code FROM business_calendar_events e LEFT JOIN customers c ON c.id=e.customer_id LEFT JOIN repairs r ON r.id=e.repair_id WHERE e.employee_id = ? AND date(e.starts_at, 'localtime') = date('now','localtime') ORDER BY e.starts_at`).all(employeeId);
+    const events = db.prepare(`SELECT e.*, c.name AS customer_name, c.address AS customer_address, r.tracking_code, r.problem_key, r.problem_label, r.description AS known_description, d.device_type, d.brand, d.model, d.serial_number FROM business_calendar_events e LEFT JOIN customers c ON c.id=e.customer_id LEFT JOIN repairs r ON r.id=e.repair_id LEFT JOIN devices d ON d.id=r.device_id WHERE e.employee_id = ? AND date(e.starts_at, 'localtime') = date('now','localtime') ORDER BY e.starts_at`).all(employeeId);
     const tasks = db.prepare(`SELECT t.*, r.tracking_code, c.name AS customer_name FROM field_tasks t LEFT JOIN repairs r ON r.id=t.repair_id LEFT JOIN customers c ON c.id=r.customer_id WHERE t.employee_id = ? AND t.status = 'offen' ORDER BY CASE t.priority WHEN 'hoch' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, datetime(t.due_at)`).all(employeeId);
     const activeTime = db.prepare(`SELECT * FROM field_time_entries WHERE employee_id = ? AND ended_at IS NULL ORDER BY datetime(started_at) DESC LIMIT 1`).get(employeeId);
     res.json({ events, tasks, activeTime });
