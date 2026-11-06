@@ -177,7 +177,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     const id = String(req.body?.employee_id ?? ""); const password = String(req.body?.password ?? "");
     const employee = db.prepare(`SELECT id, name, password_hash FROM employees WHERE id = ? AND active = 1 AND role = 'field'`).get(id) as { id: string; name: string; password_hash: string } | undefined;
     if (!employee || !passwordMatches(password, employee.password_hash)) { res.status(401).json({ error: "Anmeldung fehlgeschlagen" }); return; }
-    res.json({ token: signWorkshopToken("field"), employee: { id: employee.id, name: employee.name } });
+    res.json({ token: signWorkshopToken("field", employee.id), employee: { id: employee.id, name: employee.name } });
   });
   app.get("/api/admin/employees", requireWorkshopFullAuth, (_req, res) => {
     res.json(db.prepare(`SELECT id, name, role, active, created_at FROM employees ORDER BY name COLLATE NOCASE`).all());
@@ -193,14 +193,60 @@ export function registerRoutes(app: Express, db: Database.Database) {
   });
   app.get("/api/calendar/business", requireWorkshopFullAuth, (req, res) => {
     const from = String(req.query.from ?? ""); const to = String(req.query.to ?? "");
-    res.json(db.prepare(`SELECT e.*, c.name AS customer_name, r.tracking_code FROM business_calendar_events e LEFT JOIN customers c ON c.id=e.customer_id LEFT JOIN repairs r ON r.id=e.repair_id WHERE e.ends_at >= ? AND e.starts_at <= ? ORDER BY e.starts_at`).all(from, to));
+    res.json(db.prepare(`SELECT e.*, c.name AS customer_name, r.tracking_code, emp.name AS employee_name FROM business_calendar_events e LEFT JOIN customers c ON c.id=e.customer_id LEFT JOIN repairs r ON r.id=e.repair_id LEFT JOIN employees emp ON emp.id=e.employee_id WHERE e.ends_at >= ? AND e.starts_at <= ? ORDER BY e.starts_at`).all(from, to));
   });
   app.post("/api/calendar/business", requireWorkshopFullAuth, (req, res) => {
     const title=String(req.body?.title??"").trim(), starts=String(req.body?.starts_at??""), ends=String(req.body?.ends_at??"");
     if(!title || !starts || !ends || Date.parse(ends)<=Date.parse(starts)){res.status(400).json({error:"Titel sowie gültige Start- und Endzeit erforderlich"});return;}
-    const conflicts=db.prepare(`SELECT id,title,starts_at,ends_at FROM business_calendar_events WHERE starts_at < ? AND ends_at > ?`).all(ends,starts);
-    const id=nanoid(); db.prepare(`INSERT INTO business_calendar_events (id,customer_id,repair_id,title,starts_at,ends_at,kind,reminder_minutes,notes) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,req.body?.customer_id||null,req.body?.repair_id||null,title,starts,ends,String(req.body?.kind??"kundentermin"),Number(req.body?.reminder_minutes??60),req.body?.notes?String(req.body.notes):null);
+    const employeeId = req.body?.employee_id ? String(req.body.employee_id) : null; const resource = req.body?.resource_label ? String(req.body.resource_label).trim() : null;
+    const conflicts=db.prepare(`SELECT id,title,starts_at,ends_at FROM business_calendar_events WHERE starts_at < ? AND ends_at > ? AND ((? IS NOT NULL AND employee_id = ?) OR (? IS NOT NULL AND resource_label = ?))`).all(ends,starts,employeeId,employeeId,resource,resource);
+    const id=nanoid(); db.prepare(`INSERT INTO business_calendar_events (id,customer_id,repair_id,title,starts_at,ends_at,kind,reminder_minutes,notes,employee_id,resource_label) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id,req.body?.customer_id||null,req.body?.repair_id||null,title,starts,ends,String(req.body?.kind??"kundentermin"),Number(req.body?.reminder_minutes??60),req.body?.notes?String(req.body.notes):null,employeeId,resource);
     res.status(201).json({id,conflicts});
+  });
+
+  /** Persönliche Tagesansicht nach der Außendienst-Anmeldung. */
+  app.get("/api/field/today", requireWorkshopAuth, (req, res) => {
+    const employeeId = req.workshopEmployeeId;
+    if (req.workshopRole !== "field" || !employeeId) { res.status(403).json({ error: "Außendienst-Anmeldung erforderlich" }); return; }
+    const events = db.prepare(`SELECT e.*, c.name AS customer_name, c.address AS customer_address, r.tracking_code FROM business_calendar_events e LEFT JOIN customers c ON c.id=e.customer_id LEFT JOIN repairs r ON r.id=e.repair_id WHERE e.employee_id = ? AND date(e.starts_at, 'localtime') = date('now','localtime') ORDER BY e.starts_at`).all(employeeId);
+    const tasks = db.prepare(`SELECT t.*, r.tracking_code, c.name AS customer_name FROM field_tasks t LEFT JOIN repairs r ON r.id=t.repair_id LEFT JOIN customers c ON c.id=r.customer_id WHERE t.employee_id = ? AND t.status = 'offen' ORDER BY CASE t.priority WHEN 'hoch' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, datetime(t.due_at)`).all(employeeId);
+    const activeTime = db.prepare(`SELECT * FROM field_time_entries WHERE employee_id = ? AND ended_at IS NULL ORDER BY datetime(started_at) DESC LIMIT 1`).get(employeeId);
+    res.json({ events, tasks, activeTime });
+  });
+  app.post("/api/field/time/start", requireWorkshopAuth, (req, res) => {
+    const employeeId = req.workshopEmployeeId;
+    if (req.workshopRole !== "field" || !employeeId) { res.status(403).json({ error: "Außendienst-Anmeldung erforderlich" }); return; }
+    const current = db.prepare(`SELECT id FROM field_time_entries WHERE employee_id = ? AND ended_at IS NULL`).get(employeeId);
+    if (current) { res.status(409).json({ error: "Es läuft bereits eine Zeiterfassung" }); return; }
+    const repairId = req.body?.repair_id ? String(req.body.repair_id) : null; const eventId = req.body?.calendar_event_id ? String(req.body.calendar_event_id) : null;
+    const id=nanoid(); db.prepare(`INSERT INTO field_time_entries (id,employee_id,repair_id,calendar_event_id,note) VALUES (?,?,?,?,?)`).run(id,employeeId,repairId,eventId,req.body?.note ? String(req.body.note).slice(0,1000) : null);
+    res.status(201).json({ id });
+  });
+  app.post("/api/field/time/stop", requireWorkshopAuth, (req, res) => {
+    const employeeId = req.workshopEmployeeId;
+    if (req.workshopRole !== "field" || !employeeId) { res.status(403).json({ error: "Außendienst-Anmeldung erforderlich" }); return; }
+    const breaks = Math.max(0, Math.min(480, Math.round(Number(req.body?.break_minutes ?? 0))));
+    const row = db.prepare(`SELECT id FROM field_time_entries WHERE employee_id = ? AND ended_at IS NULL ORDER BY datetime(started_at) DESC LIMIT 1`).get(employeeId) as { id: string } | undefined;
+    if (!row) { res.status(404).json({ error: "Keine laufende Zeiterfassung" }); return; }
+    db.prepare(`UPDATE field_time_entries SET ended_at=datetime('now'), break_minutes=? WHERE id=?`).run(breaks,row.id); res.json({ id: row.id });
+  });
+  app.patch("/api/field/tasks/:id", requireWorkshopAuth, (req, res) => {
+    const employeeId = req.workshopEmployeeId; const id = paramStr(req.params.id);
+    if (req.workshopRole !== "field" || !employeeId) { res.status(403).json({ error: "Außendienst-Anmeldung erforderlich" }); return; }
+    const status = req.body?.status === "erledigt" ? "erledigt" : "offen";
+    const out = db.prepare(`UPDATE field_tasks SET status=?, completed_at=CASE WHEN ?='erledigt' THEN datetime('now') ELSE NULL END WHERE id=? AND employee_id=?`).run(status,status,id,employeeId);
+    if (!out.changes) { res.status(404).json({ error: "Aufgabe nicht gefunden" }); return; } res.json({ ok:true });
+  });
+  app.post("/api/admin/field-tasks", requireWorkshopFullAuth, (req, res) => {
+    const title=String(req.body?.title??"").trim(), employeeId=String(req.body?.employee_id??"").trim();
+    if (!title || !employeeId) { res.status(400).json({ error:"Aufgabe und Mitarbeiter erforderlich" }); return; }
+    const id=nanoid(); db.prepare(`INSERT INTO field_tasks (id,repair_id,employee_id,title,notes,due_at,priority) VALUES (?,?,?,?,?,?,?)`).run(id,req.body?.repair_id||null,employeeId,title,req.body?.notes?String(req.body.notes):null,req.body?.due_at||null,["niedrig","normal","hoch"].includes(req.body?.priority)?req.body.priority:"normal"); res.status(201).json({id});
+  });
+  app.get("/api/maintenance", requireWorkshopFullAuth, (_req, res) => res.json(db.prepare(`SELECT m.*, c.name AS customer_name, d.device_type, d.brand, d.model FROM maintenance_plans m JOIN customers c ON c.id=m.customer_id LEFT JOIN devices d ON d.id=m.device_id WHERE m.active=1 ORDER BY date(m.next_due_at)`).all()));
+  app.post("/api/maintenance", requireWorkshopFullAuth, (req, res) => {
+    const customerId=String(req.body?.customer_id??""), title=String(req.body?.title??"").trim(), months=Math.round(Number(req.body?.interval_months)); const next=String(req.body?.next_due_at??"");
+    if (!customerId || !title || !Number.isInteger(months) || months<1 || months>60 || !Date.parse(next)) { res.status(400).json({error:"Ungültiger Wartungsplan"}); return; }
+    const id=nanoid(); db.prepare(`INSERT INTO maintenance_plans (id,customer_id,device_id,title,interval_months,next_due_at,notes) VALUES (?,?,?,?,?,?,?)`).run(id,customerId,req.body?.device_id||null,title,months,next,req.body?.notes?String(req.body.notes):null); res.status(201).json({id});
   });
 
   /** Mobile-Eingang: keine produktiven Kunden oder Aufträge ohne Werkstatt-Prüfung erzeugen. */

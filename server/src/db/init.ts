@@ -35,6 +35,7 @@ export function openDatabase(): Database.Database {
   migrateRepairsInReparaturSince(db);
   migrateRepairsIntakeLocation(db);
   migrateFieldVisitColumns(db);
+  migrateBusinessCalendarAssignments(db);
   seedInitialFieldEmployee(db);
   return db;
 }
@@ -53,6 +54,12 @@ function migrateFieldVisitColumns(db: Database.Database): void {
   ] as const) {
     if (!cols.some((c) => c.name === name)) db.exec(`ALTER TABLE repairs ADD COLUMN ${name} ${sql}`);
   }
+}
+
+function migrateBusinessCalendarAssignments(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(business_calendar_events)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "employee_id")) db.exec(`ALTER TABLE business_calendar_events ADD COLUMN employee_id TEXT REFERENCES employees(id)`);
+  if (!cols.some((c) => c.name === "resource_label")) db.exec(`ALTER TABLE business_calendar_events ADD COLUMN resource_label TEXT`);
 }
 
 /** Kennzeichnet Annahmen im Außendienst, damit sie nicht als eingeliefert gelten. */

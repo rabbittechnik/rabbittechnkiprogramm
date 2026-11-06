@@ -18,6 +18,7 @@ const NAV_SECTIONS = [
       { to: "/track", label: "Kunden-Tracking" },
       { to: "/lager", label: "Lager & Teile" },
       { to: "/teile-bestellen", label: "Teile bestellen" },
+      { to: "/einsatzplanung", label: "Einsatzplanung" },
       { to: "/netzwerk", label: "Netzwerkeinrichtung" },
       { to: "/netzwerk-auftraege", label: "Netzwerk-Aufträge" },
     ],

@@ -34,6 +34,7 @@ const NetworkWizard = lazy(() => import("./pages/NetworkWizard").then((m) => ({ 
 const NetworkOrdersPage = lazy(() => import("./pages/NetworkOrdersPage").then((m) => ({ default: m.NetworkOrdersPage })));
 const NetworkAdminPage = lazy(() => import("./pages/NetworkAdminPage").then((m) => ({ default: m.NetworkAdminPage })));
 const TeileBestellenPage = lazy(() => import("./pages/TeileBestellenPage").then((m) => ({ default: m.TeileBestellenPage })));
+const DispatchPage = lazy(() => import("./pages/DispatchPage").then((m) => ({ default: m.DispatchPage })));
 
 function SuspenseWrap({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoadingFallback />}>{children}</Suspense>;
@@ -131,6 +132,7 @@ export default function App() {
         <Route path="/auftraege" element={<SuspenseWrap><Workshop pageTitle="Auftragsverwaltung" /></SuspenseWrap>} />
         <Route path="/kunden" element={<SuspenseWrap><KundenPage /></SuspenseWrap>} />
         <Route path="/teile-bestellen" element={<SuspenseWrap><TeileBestellenPage /></SuspenseWrap>} />
+        <Route path="/einsatzplanung" element={<SuspenseWrap><DispatchPage /></SuspenseWrap>} />
         <Route path="/lager" element={<SuspenseWrap><LagerPage /></SuspenseWrap>} />
         <Route path="/rechnungen" element={<SuspenseWrap><RechnungenPage /></SuspenseWrap>} />
         <Route path="/buchhaltung-erp" element={<SuspenseWrap><ErpOverlayPage /></SuspenseWrap>} />

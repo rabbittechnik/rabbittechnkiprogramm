@@ -6,6 +6,7 @@ declare global {
     interface Request {
       /** Gesetzt wenn Werkstatt-Passwort aktiv und Bearer gültig: `workshop` oder `bench`. */
       workshopRole?: "workshop" | "bench" | "field";
+      workshopEmployeeId?: string;
     }
   }
 }
@@ -47,8 +48,8 @@ export function verifyBenchPassword(password: string): boolean {
 
 export type WorkshopTokenRole = "workshop" | "bench" | "field";
 
-export function signWorkshopToken(role: WorkshopTokenRole = "workshop"): string {
-  const payload = { role, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 };
+export function signWorkshopToken(role: WorkshopTokenRole = "workshop", employeeId?: string): string {
+  const payload = { role, employeeId: role === "field" ? employeeId : undefined, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 };
   const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto.createHmac("sha256", getSecret()).update(data).digest("base64url");
   return `${data}.${sig}`;
@@ -59,7 +60,7 @@ export function verifyWorkshopToken(token: string): boolean {
   return parseWorkshopToken(token) !== null;
 }
 
-export function parseWorkshopToken(token: string): { role: WorkshopTokenRole; exp: number } | null {
+export function parseWorkshopToken(token: string): { role: WorkshopTokenRole; exp: number; employeeId?: string } | null {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
@@ -75,10 +76,11 @@ export function parseWorkshopToken(token: string): { role: WorkshopTokenRole; ex
     const payload = JSON.parse(Buffer.from(data, "base64url").toString("utf8")) as {
       exp?: number;
       role?: string;
+      employeeId?: unknown;
     };
     if (typeof payload.exp !== "number" || payload.exp < Date.now()) return null;
     const role: WorkshopTokenRole = payload.role === "bench" ? "bench" : payload.role === "field" ? "field" : "workshop";
-    return { role, exp: payload.exp };
+    return { role, exp: payload.exp, employeeId: typeof payload.employeeId === "string" ? payload.employeeId : undefined };
   } catch {
     return null;
   }
@@ -123,6 +125,7 @@ export function requireWorkshopAuth(req: Request, res: Response, next: NextFunct
     return;
   }
   req.workshopRole = parsed.role;
+  req.workshopEmployeeId = parsed.employeeId;
   next();
 }
 

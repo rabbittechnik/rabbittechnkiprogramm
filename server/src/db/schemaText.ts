@@ -195,9 +195,50 @@ CREATE TABLE IF NOT EXISTS business_calendar_events (
   kind TEXT NOT NULL DEFAULT 'kundentermin',
   reminder_minutes INTEGER NOT NULL DEFAULT 60,
   notes TEXT,
+  employee_id TEXT REFERENCES employees(id),
+  resource_label TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_business_calendar_window ON business_calendar_events(starts_at, ends_at);
+
+CREATE TABLE IF NOT EXISTS field_tasks (
+  id TEXT PRIMARY KEY,
+  repair_id TEXT REFERENCES repairs(id) ON DELETE CASCADE,
+  employee_id TEXT REFERENCES employees(id),
+  title TEXT NOT NULL,
+  notes TEXT,
+  due_at TEXT,
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('niedrig','normal','hoch')),
+  status TEXT NOT NULL DEFAULT 'offen' CHECK (status IN ('offen','erledigt')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_field_tasks_employee ON field_tasks(employee_id, status, due_at);
+
+CREATE TABLE IF NOT EXISTS field_time_entries (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  repair_id TEXT REFERENCES repairs(id),
+  calendar_event_id TEXT REFERENCES business_calendar_events(id),
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ended_at TEXT,
+  break_minutes INTEGER NOT NULL DEFAULT 0,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_field_time_employee ON field_time_entries(employee_id, started_at);
+
+CREATE TABLE IF NOT EXISTS maintenance_plans (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  interval_months INTEGER NOT NULL CHECK (interval_months BETWEEN 1 AND 60),
+  next_due_at TEXT NOT NULL,
+  notes TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_due ON maintenance_plans(active, next_due_at);
 
 -- Eingang aus separater Mobile-Annahme; erst nach Werkstatt-Prüfung importieren.
 CREATE TABLE IF NOT EXISTS mobile_intake_submissions (
