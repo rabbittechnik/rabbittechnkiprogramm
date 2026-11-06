@@ -468,7 +468,9 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     const rows = db
       .prepare(
-        `SELECT r.id, r.tracking_code, r.status, r.total_cents, r.created_at, r.acceptance_pdf_path
+        `SELECT r.id, r.tracking_code, r.status, r.total_cents,
+                COALESCE((SELECT SUM(amount_cents) FROM repair_payments p WHERE p.repair_id = r.id), 0) AS paid_cents,
+                r.created_at, r.acceptance_pdf_path
          FROM repairs r
          WHERE r.customer_id = ?
          ORDER BY datetime(r.created_at) DESC
@@ -1148,6 +1150,21 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
 
     res.json({ repair });
+  });
+
+  /** Teilzahlung: dokumentiert jede Vor-Ort-Zahlung, ohne den Auftrag vorzeitig als vollständig bezahlt zu markieren. */
+  app.post("/api/repairs/:id/payments", requireWorkshopAuth, (req, res) => {
+    const repairId = paramStr(req.params.id);
+    const amount = Number(req.body?.amount_cents);
+    const method = String(req.body?.method ?? "").trim();
+    const repair = db.prepare(`SELECT total_cents FROM repairs WHERE id = ?`).get(repairId) as { total_cents: number } | undefined;
+    if (!repair || !Number.isInteger(amount) || amount <= 0 || !method) { res.status(400).json({ error: "Ungültige Teilzahlung" }); return; }
+    const paid = (db.prepare(`SELECT COALESCE(SUM(amount_cents),0) AS cents FROM repair_payments WHERE repair_id = ?`).get(repairId) as { cents: number }).cents;
+    if (amount > repair.total_cents - paid) { res.status(400).json({ error: "Teilzahlung ist höher als der offene Betrag" }); return; }
+    db.prepare(`INSERT INTO repair_payments (id, repair_id, amount_cents, method, note, created_by) VALUES (?,?,?,?,?,?)`).run(nanoid(), repairId, amount, method, req.body?.note ? String(req.body.note) : null, req.workshopRole === "field" ? "field" : "workshop");
+    const newPaid = paid + amount;
+    if (newPaid === repair.total_cents) db.prepare(`UPDATE repairs SET payment_status = 'bezahlt', payment_paid_at = datetime('now') WHERE id = ?`).run(repairId);
+    res.status(201).json({ paid_cents: newPaid, open_cents: repair.total_cents - newPaid });
   });
 
   app.patch("/api/repairs/:id/payment", requireWorkshopFullAuth, (req, res) => {

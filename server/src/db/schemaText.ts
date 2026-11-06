@@ -151,6 +151,17 @@ CREATE TABLE IF NOT EXISTS signatures (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS repair_payments (
+  id TEXT PRIMARY KEY,
+  repair_id TEXT NOT NULL REFERENCES repairs(id) ON DELETE CASCADE,
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  method TEXT NOT NULL,
+  paid_at TEXT NOT NULL DEFAULT (datetime('now')),
+  note TEXT,
+  created_by TEXT NOT NULL DEFAULT 'field'
+);
+CREATE INDEX IF NOT EXISTS idx_repair_payments_repair ON repair_payments(repair_id, paid_at);
+
 CREATE TABLE IF NOT EXISTS part_suggestion_rules (
   id TEXT PRIMARY KEY,
   keywords TEXT NOT NULL,

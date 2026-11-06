@@ -1,0 +1,15 @@
+.field-tablet { background:#f4f7fb; color:#172033; min-height:100vh; font-family:Inter,system-ui,sans-serif; }
+.field-tablet .rt-input-neon { background:#fff; color:#172033; border:1px solid #cfd8e6; border-radius:10px; min-height:48px; box-shadow:none; }
+.field-tablet .rt-btn-confirm { background:#1769e0; color:#fff; border-radius:10px; box-shadow:none; font-weight:700; }
+.field-tablet .rt-btn-confirm:hover { background:#0f57bd; }
+.field-tablet section { background:#fff!important; border:1px solid #dce3ed!important; box-shadow:0 8px 24px rgba(32,55,85,.08); }
+.field-tablet button { transition:background .15s,border-color .15s,transform .15s; }
+.field-tablet button:active { transform:scale(.98); }
+.field-tablet .text-white,.field-tablet .text-zinc-300,.field-tablet .text-zinc-200 { color:#172033!important; }
+.field-tablet .text-sky-300,.field-tablet .text-sky-200 { color:#1769e0!important; }
+.field-tablet .border-sky-400\/30,.field-tablet .border-sky-400\/40 { border-color:#c8d7ed!important; }
+.field-tablet .bg-\[\#0a1220\],.field-tablet .bg-\[\#060b13\] { background:#fff!important; }
+.field-tablet .bg-\[\#39ff14\]\/10 { background:#eaf7ef!important; }
+.field-tablet .text-\[\#39ff14\],.field-tablet .text-\[\#b8ff9a\] { color:#147a43!important; }
+.field-tablet .border-\[\#39ff14\] { border-color:#33a266!important; }
+@media (min-width:900px){ .field-tablet > div { max-width:1180px; } }
