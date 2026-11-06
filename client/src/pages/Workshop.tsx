@@ -24,6 +24,7 @@ type Row = {
   repair_order_number?: string | null;
   status: string;
   intake_location?: "werkstatt" | "aussendienst";
+  field_outcome?: "vor_ort" | "mitnehmen" | null;
   total_cents: number;
   payment_status: string;
   payment_method?: string | null;
@@ -628,7 +629,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                 <p className="text-sm text-zinc-300 mt-1">
                   {r.customer_name} · {r.device_type} {[r.brand, r.model].filter(Boolean).join(" ")}
                 </p>
-                {r.intake_location === "aussendienst" && <p className="text-xs text-sky-200 mt-1">Gerät noch beim Kunden – nicht als eingeliefert einplanen.</p>}
+                {r.intake_location === "aussendienst" && <p className="text-xs text-sky-200 mt-1">{r.field_outcome === "mitnehmen" ? "Gerät wird aus dem Außendienst mitgebracht – Eingang in Werkstatt erwartet." : "Vor Ort erledigt – keine Geräteannahme in der Werkstatt erwartet."}</p>}
                 <p className="text-xs text-zinc-500 mt-1">
                   {(r.total_cents / 100).toFixed(2)} € ·{" "}
                   {r.payment_status === "bezahlt" ? (
@@ -681,7 +682,7 @@ export function Workshop({ pageTitle = "Auftragsverwaltung" }: { pageTitle?: str
                   Kundenansicht
                 </Link>
               </div>
-              {selected.intake_location === "aussendienst" && <div className="rounded-xl border border-sky-400/50 bg-sky-400/10 px-4 py-3 text-sm text-sky-100"><strong>Gerät noch beim Kunden.</strong> Dieser Auftrag wurde im Außendienst angenommen und ist noch nicht in der Werkstatt eingetroffen.</div>}
+              {selected.intake_location === "aussendienst" && <div className="rounded-xl border border-sky-400/50 bg-sky-400/10 px-4 py-3 text-sm text-sky-100"><strong>{selected.field_outcome === "mitnehmen" ? "Geräte-Eingang erwartet." : "Vor Ort erledigt."}</strong> {selected.field_outcome === "mitnehmen" ? "Der Kostenvoranschlag wurde beim Kunden bestätigt; die Rechnung wird erst nach der Reparatur finalisiert." : "Es wird keine Geräteannahme in der Werkstatt erwartet."}</div>}
               <div>
                 <p className="rt-label-neon mb-2">Status</p>
                 <div className="flex flex-wrap gap-2">

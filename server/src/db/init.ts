@@ -31,7 +31,17 @@ export function openDatabase(): Database.Database {
   migrateRepairLogs(db);
   migrateRepairsInReparaturSince(db);
   migrateRepairsIntakeLocation(db);
+  migrateFieldVisitColumns(db);
   return db;
+}
+
+function migrateFieldVisitColumns(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repairs)`).all() as { name: string }[];
+  for (const [name, sql] of [
+    ["field_arrived_at", "TEXT"], ["field_completed_at", "TEXT"], ["field_outcome", "TEXT"], ["quote_accepted_at", "TEXT"],
+  ] as const) {
+    if (!cols.some((c) => c.name === name)) db.exec(`ALTER TABLE repairs ADD COLUMN ${name} ${sql}`);
+  }
 }
 
 /** Kennzeichnet Annahmen im Außendienst, damit sie nicht als eingeliefert gelten. */

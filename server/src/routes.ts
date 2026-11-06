@@ -496,7 +496,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     if (isBenchRequest(req)) {
       const rows = db
         .prepare(
-          `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.intake_location, r.updated_at, r.created_at, r.is_test,
+          `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.intake_location, r.field_outcome, r.updated_at, r.created_at, r.is_test,
            c.name AS customer_name, d.device_type, d.brand, d.model,
            (SELECT COUNT(1) FROM repair_logs l WHERE l.repair_id = r.id AND l.created_by = 'annahme') AS customer_amendment_count
            FROM repairs r
@@ -511,7 +511,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     const rows = db
       .prepare(
-        `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.intake_location, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
+        `SELECT r.id, r.tracking_code, r.repair_order_number, r.status, r.intake_location, r.field_outcome, r.total_cents, r.payment_status, r.payment_method, r.sumup_channel, r.payment_due_at, r.updated_at, r.created_at,
          r.is_test,
          c.name as customer_name, d.device_type, d.brand, d.model,
          (SELECT COUNT(1) FROM repair_logs l WHERE l.repair_id = r.id AND l.created_by = 'annahme') AS customer_amendment_count
@@ -658,6 +658,11 @@ export function registerRoutes(app: Express, db: Database.Database) {
 
       const isTest = body.is_test === true ? 1 : 0;
       const intakeLocation = body.intake_location === "aussendienst" ? "aussendienst" : "werkstatt";
+      const fieldOutcome = body.field_outcome === "vor_ort" || body.field_outcome === "mitnehmen" ? body.field_outcome : null;
+      if (intakeLocation === "aussendienst" && !fieldOutcome) {
+        res.status(400).json({ error: "Bitte festlegen: vor Ort erledigt oder Gerät mitnehmen" });
+        return;
+      }
 
       const did = nanoid();
       const rid = nanoid();
@@ -699,8 +704,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
         );
 
         db.prepare(
-          `INSERT INTO repairs (id, tracking_code, repair_order_number, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, intake_location, status, total_cents, payment_status, is_test)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO repairs (id, tracking_code, repair_order_number, customer_id, device_id, problem_key, problem_label, description, accessories, pre_damage_notes, legal_consent_at, signature_data_url, intake_location, field_arrived_at, field_completed_at, field_outcome, quote_accepted_at, status, total_cents, payment_status, is_test)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           rid,
           tracking,
@@ -715,6 +720,10 @@ export function registerRoutes(app: Express, db: Database.Database) {
           legal,
           signatureDataUrl,
           intakeLocation,
+          intakeLocation === "aussendienst" ? String(body.field_arrived_at ?? new Date().toISOString()) : null,
+          intakeLocation === "aussendienst" ? new Date().toISOString() : null,
+          fieldOutcome,
+          intakeLocation === "aussendienst" && signatureDataUrl ? new Date().toISOString() : null,
           "angenommen",
           0,
           "offen",

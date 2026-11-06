@@ -47,6 +47,8 @@ export function Wizard({ fieldMode = false }: { fieldMode?: boolean }) {
   const [preview, setPreview] = useState<{ services: ServiceRow[]; total_cents: number } | null>(null);
   const [partSuggestions, setPartSuggestions] = useState<PartSuggestion[]>([]);
   const [isTest, setIsTest] = useState(false);
+  const [fieldOutcome, setFieldOutcome] = useState<"vor_ort" | "mitnehmen" | "">("");
+  const [fieldArrivedAt] = useState(() => new Date().toISOString());
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{
     tracking: string;
@@ -221,6 +223,10 @@ export function Wizard({ fieldMode = false }: { fieldMode?: boolean }) {
       alert("Bitte Zustimmung bestätigen.");
       return;
     }
+    if (fieldMode && !fieldOutcome) {
+      alert("Bitte auswählen, ob das Gerät vor Ort bleibt oder mitgenommen wird.");
+      return;
+    }
     setSubmitting(true);
     try {
       const body: Record<string, unknown> = {
@@ -240,6 +246,7 @@ export function Wizard({ fieldMode = false }: { fieldMode?: boolean }) {
         service_codes: selectedServiceCodes,
         is_test: isTest || undefined,
         intake_location: fieldMode ? "aussendienst" : "werkstatt",
+        ...(fieldMode ? { field_arrived_at: fieldArrivedAt, field_outcome: fieldOutcome } : {}),
       };
       if (selectedCustomerId) {
         body.customer_id = selectedCustomerId;
@@ -697,6 +704,7 @@ export function Wizard({ fieldMode = false }: { fieldMode?: boolean }) {
                 Testmodus – Rechnung wird als TEST markiert (nicht in Buchhaltung / DATEV / Berichten)
               </span>
             </label>}
+            {fieldMode && <div className="rounded-xl border border-sky-400/40 bg-sky-400/5 p-4 space-y-3"><p className="text-sm font-semibold text-sky-100">Abschluss beim Kunden</p><p className="text-xs text-sky-200/75">Ankunft: {new Date(fieldArrivedAt).toLocaleString("de-DE")}</p><div className="grid sm:grid-cols-2 gap-3"><button type="button" onClick={() => setFieldOutcome("vor_ort")} className={`min-h-[64px] rounded-xl border p-3 text-left ${fieldOutcome === "vor_ort" ? "border-[#39ff14] bg-[#39ff14]/10 text-[#b8ff9a]" : "border-sky-400/30 text-sky-100"}`}><strong>Vor Ort erledigt</strong><span className="block text-xs mt-1">Kunde bezahlt nur die vor Ort erbrachte Leistung.</span></button><button type="button" onClick={() => setFieldOutcome("mitnehmen")} className={`min-h-[64px] rounded-xl border p-3 text-left ${fieldOutcome === "mitnehmen" ? "border-amber-400 bg-amber-400/10 text-amber-100" : "border-sky-400/30 text-sky-100"}`}><strong>Gerät mitnehmen</strong><span className="block text-xs mt-1">Unterschrift bestätigt Kostenvoranschlag; Rechnung erst nach Reparatur.</span></button></div></div>}
             <button
               type="button"
               disabled={submitting}
