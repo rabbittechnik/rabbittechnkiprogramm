@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS repair_parts (
   sale_cents INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'bestellt',
   barcode TEXT,
+  serial_number TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -18,6 +18,7 @@ export function openDatabase(): Database.Database {
   db.exec(SCHEMA_SQL);
   migrateRepairsAcceptanceColumn(db);
   migrateRepairPartsBarcode(db);
+  migrateRepairPartsSerialNumber(db);
   migrateRepairsPaymentDueAt(db);
   migrateRepairsPaymentMethod(db);
   migrateRepairsSumupCheckout(db);
@@ -338,6 +339,13 @@ function migrateRepairPartsBarcode(db: Database.Database): void {
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_repair_parts_barcode_unique ON repair_parts(barcode) WHERE barcode IS NOT NULL`
   );
+}
+
+function migrateRepairPartsSerialNumber(db: Database.Database): void {
+  const cols = db.prepare(`PRAGMA table_info(repair_parts)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "serial_number")) {
+    db.exec(`ALTER TABLE repair_parts ADD COLUMN serial_number TEXT`);
+  }
 }
 
 function migrateRepairsPaymentDueAt(db: Database.Database): void {

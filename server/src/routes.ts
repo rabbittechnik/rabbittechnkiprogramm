@@ -480,6 +480,49 @@ export function registerRoutes(app: Express, db: Database.Database) {
     res.json(rows);
   });
 
+  /** Ergänzt einen bestehenden Auftrag aus dem Außendienst, ohne eine zweite Reparatur anzulegen. */
+  app.post("/api/repairs/:id/field-follow-up", requireWorkshopAuth, (req, res) => {
+    const repairId = paramStr(req.params.id);
+    const repair = db.prepare(`SELECT id, status FROM repairs WHERE id = ?`).get(repairId) as { id: string; status: string } | undefined;
+    if (!repair || repair.status === "abgeholt") { res.status(404).json({ error: "Offener Auftrag nicht gefunden" }); return; }
+    const body = req.body ?? {};
+    const workNote = String(body.work_note ?? "").trim();
+    const codes = Array.isArray(body.service_codes) ? body.service_codes.map(String) : [];
+    const serviceRows = getServiceRowsByCodes(db, codes);
+    const prices = body.service_prices && typeof body.service_prices === "object" ? body.service_prices as Record<string, unknown> : {};
+    const notes = body.service_notes && typeof body.service_notes === "object" ? body.service_notes as Record<string, unknown> : {};
+    const parts = Array.isArray(body.parts) ? body.parts : [];
+    try {
+      const tx = db.transaction(() => {
+        const insertService = db.prepare(`INSERT OR IGNORE INTO repair_services (repair_id, service_id, price_cents) VALUES (?,?,?)`);
+        const insertNote = db.prepare(`INSERT INTO repair_service_notes (id, repair_id, service_id, service_code, note, created_by) VALUES (?,?,?,?,?, 'field')`);
+        for (const service of serviceRows) {
+          const requested = prices[service.code]; const price = requested === undefined ? service.price_cents : Number(requested);
+          if (!Number.isInteger(price) || price < 0 || price > 1_000_000) throw new Error(`Ungültiger Preis für ${service.name}`);
+          insertService.run(repairId, service.id, price);
+          const rawNote = notes[service.code];
+          const note = typeof rawNote === "string" ? rawNote.trim() : "";
+          if (note) insertNote.run(nanoid(), repairId, service.id, service.code, note.slice(0, 4000));
+        }
+        const insertPart = db.prepare(`INSERT INTO repair_parts (id, repair_id, part_id, name, purchase_cents, sale_cents, status, serial_number) VALUES (?,?,?,?,?,?,?,?)`);
+        for (const raw of parts) {
+          const part = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+          const name = String(part.name ?? "").trim(); const purchase = Math.round(Number(part.purchase_cents ?? 0)); const sale = Math.round(Number(part.sale_cents ?? 0));
+          const serial = part.serial_number == null ? null : String(part.serial_number).trim() || null;
+          if (!name || !Number.isInteger(purchase) || !Number.isInteger(sale) || purchase < 0 || sale < 0) throw new Error("Ungültiges Ersatzteil");
+          insertPart.run(nanoid(), repairId, null, name, purchase, sale, "eingebaut", serial);
+        }
+        if (workNote) db.prepare(`INSERT INTO repair_logs (id, repair_id, logged_at, action_type, description, created_by) VALUES (?, ?, datetime('now'), 'Außendienst-Folgeauftrag', ?, 'field')`).run(nanoid(), repairId, workNote.slice(0, 4000));
+        recalculateRepairTotal(db, repairId);
+        syncRepairStatusForParts(db, repairId);
+      });
+      tx();
+      scheduleSyncRepairOrderPdfs(db, repairId, req);
+      const updated = db.prepare(`SELECT id, tracking_code, total_cents, status FROM repairs WHERE id = ?`).get(repairId);
+      res.json({ repair: updated });
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Folgeauftrag konnte nicht gespeichert werden" }); }
+  });
+
   app.get("/api/auth/status", (_req, res) => {
     res.json({
       workshopAuthRequired: !allowUnprotectedWorkshopAccess(),
@@ -717,6 +760,18 @@ export function registerRoutes(app: Express, db: Database.Database) {
         }
         agreedPrices.set(service.code, cents);
       }
+      const requestedParts = Array.isArray(body.parts) ? body.parts : [];
+      const fieldParts = requestedParts.map((raw: unknown) => {
+        const part = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+        const name = String(part.name ?? "").trim();
+        const purchase_cents = Math.round(Number(part.purchase_cents ?? 0));
+        const sale_cents = Math.round(Number(part.sale_cents ?? 0));
+        const serial_number = part.serial_number == null ? null : String(part.serial_number).trim() || null;
+        if (!name || !Number.isInteger(purchase_cents) || !Number.isInteger(sale_cents) || purchase_cents < 0 || sale_cents < 0) {
+          throw new Error("Ungültiges Ersatzteil");
+        }
+        return { name, purchase_cents, sale_cents, serial_number };
+      });
 
       const isTest = body.is_test === true ? 1 : 0;
       const intakeLocation = body.intake_location === "aussendienst" ? "aussendienst" : "werkstatt";
@@ -803,6 +858,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
           const note = typeof rawNote === "string" ? rawNote.trim() : "";
           if (note) insNote.run(nanoid(), rid, s.id, s.code, note.slice(0, 4000), intakeLocation === "aussendienst" ? "field" : "workshop");
         }
+        const insPart = db.prepare(`INSERT INTO repair_parts (id, repair_id, part_id, name, purchase_cents, sale_cents, status, serial_number) VALUES (?,?,?,?,?,?,?,?)`);
+        for (const part of fieldParts) insPart.run(nanoid(), rid, null, part.name, part.purchase_cents, part.sale_cents, intakeLocation === "aussendienst" ? "vor_ort" : "bestellt", part.serial_number);
 
         if (signatureDataUrl) {
           const sigId = nanoid();
@@ -1690,7 +1747,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       return;
     }
     const initialStatus = String(req.body?.status ?? "bestellt").trim();
-    const allowedInit = ["bestellt", "vor_ort"];
+    const allowedInit = ["bestellt", "vor_ort", "eingebaut"];
     if (!allowedInit.includes(initialStatus)) {
       res.status(400).json({ error: "Ungültiger Teile-Status (bestellt oder vor_ort)" });
       return;
@@ -1702,6 +1759,7 @@ export function registerRoutes(app: Express, db: Database.Database) {
       sale_cents = 0;
     }
     let barcode: string | null = null;
+    const serialNumber = req.body?.serial_number == null ? null : String(req.body.serial_number).trim() || null;
     const rawBc = req.body?.barcode;
     if (rawBc != null && String(rawBc).trim() !== "") {
       barcode = String(rawBc).trim();
@@ -1713,8 +1771,8 @@ export function registerRoutes(app: Express, db: Database.Database) {
     }
     const pid = nanoid();
     db.prepare(
-      `INSERT INTO repair_parts (id, repair_id, part_id, name, purchase_cents, sale_cents, status, barcode) VALUES (?,?,?,?,?,?,?,?)`
-    ).run(pid, repairId, null, name, purchase_cents, sale_cents, initialStatus, barcode);
+      `INSERT INTO repair_parts (id, repair_id, part_id, name, purchase_cents, sale_cents, status, barcode, serial_number) VALUES (?,?,?,?,?,?,?,?,?)`
+    ).run(pid, repairId, null, name, purchase_cents, sale_cents, initialStatus, barcode, serialNumber);
     recalculateRepairTotal(db, repairId);
     syncRepairStatusForParts(db, repairId);
     queueCustomerRepairNotification(
