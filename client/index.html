@@ -5,7 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 
     <!-- PWA -->
-    <link rel="manifest" href="/manifest.json" />
+    <link id="rt-manifest" rel="manifest" href="/manifest.json" />
+    <script>
+      /* iPadOS liest das Manifest beim Hinzufügen zum Home-Bildschirm vor React. */
+      if (location.pathname === "/aussendienst" || location.pathname.startsWith("/aussendienst/")) {
+        document.getElementById("rt-manifest").setAttribute("href", "/manifest-field.json");
+        document.title = "Rabbit-Technik Außendienst";
+      }
+    </script>
     <meta name="theme-color" content="#060b13" />
     <meta name="color-scheme" content="dark" />
     <meta name="mobile-web-app-capable" content="yes" />
