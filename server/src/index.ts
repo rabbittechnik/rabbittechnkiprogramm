@@ -131,6 +131,18 @@ if (fs.existsSync(CLIENT_DIST)) {
       res.status(404).send("Not found");
       return;
     }
+    /** iPadOS liest das Manifest beim ersten HTML-Abruf. Außendienst erhält daher eine eigene PWA-ID vor React. */
+    if (p === "/aussendienst" || p === "/aussendienst/") {
+      try {
+        const fieldHtml = fs
+          .readFileSync(indexHtml, "utf8")
+          .replace('href="/manifest.json"', 'href="/manifest-field.json"');
+        res.type("html").send(fieldHtml);
+      } catch (err) {
+        next(err);
+      }
+      return;
+    }
     res.sendFile(indexHtml, (err) => {
       if (err) next(err);
     });
